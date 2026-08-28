@@ -91,10 +91,20 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 
 	bySubnet := make(map[string][]diagramNode, len(subnetRows))
 	subnetOrder := make([]string, 0, len(subnetRows))
-	subnetName := make(map[string]string, len(subnetRows))
+	subnetLabel := make(map[string]string, len(subnetRows))
 	for _, row := range subnetRows {
 		subnetOrder = append(subnetOrder, row.ID)
-		subnetName[row.ID] = row.Name
+		label := row.Name
+		if sn, ok := row.Raw.(core.Subnet); ok && sn.CidrBlock != nil {
+			// Mermaid's own \n multi-line syntax forces a minimum subgraph
+			// title width (its default wrappingWidth, ~200px) that's wider
+			// than a lightly-populated subnet's natural content width,
+			// squeezing that subnet's instance nodes into wrapping to fit.
+			// <br/> (HTML label, no wrapping div) doesn't hit that path —
+			// confirmed stable, at the cost of left-aligning the CIDR line.
+			label = row.Name + "<br/>(" + *sn.CidrBlock + ")"
+		}
+		subnetLabel[row.ID] = label
 		bySubnet[row.ID] = nil
 	}
 	add := func(subnetID, shape, label string) {
@@ -160,12 +170,20 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	fmt.Fprintf(&b, "  subgraph vcn[%s]\n", mermaidLabel(vcnName))
 	for i, subnetID := range subnetOrder {
 		subNode := fmt.Sprintf("sub%d", i)
-		fmt.Fprintf(&b, "    subgraph %s[%s]\n", subNode, mermaidLabel(subnetName[subnetID]))
-		for j, n := range bySubnet[subnetID] {
+		fmt.Fprintf(&b, "    subgraph %s[%s]\n", subNode, mermaidLabel(subnetLabel[subnetID]))
+		leaves := bySubnet[subnetID]
+		for j, n := range leaves {
 			resNode := fmt.Sprintf("%s_%d", subNode, j)
 			b.WriteString("      ")
 			b.WriteString(shapedNode(resNode, n.shape, n.label))
 			b.WriteString("\n")
+		}
+		if len(leaves) == 0 {
+			// A subgraph with zero children crashes some Mermaid renderers
+			// (Notion included) when it also has an edge attached — they
+			// index into the cluster's node list to compute a bounding box
+			// and there's nothing there. A placeholder keeps it non-empty.
+			fmt.Fprintf(&b, "      %s_empty[\"(no resources)\"]\n", subNode)
 		}
 		b.WriteString("    end\n")
 	}
