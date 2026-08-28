@@ -68,9 +68,9 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 
 ```bash
 ./toci                                    # profile: $OCI_CLI_PROFILE or DEFAULT
-./toci --profile KAKAOBANK                # a specific profile
-./toci --profile KAKAOBANK --region us-ashburn-1   # override region (default: profile's region)
-./toci --profile KAKAOBANK --write        # enable write actions (instance start/stop, Bastion SSH)
+./toci --profile ETEVERS                # a specific profile
+./toci --profile ETEVERS --region us-ashburn-1   # override region (default: profile's region)
+./toci --profile ETEVERS --write        # enable write actions (instance start/stop, Bastion SSH)
 ```
 
 On startup you'll land on the tenancy root's Compartments list. Drill down with `Enter`; if a compartment has no sub-compartments, toci lands you on its VCNs instead.

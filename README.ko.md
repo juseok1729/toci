@@ -68,9 +68,9 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 
 ```bash
 ./toci                                    # 프로파일: $OCI_CLI_PROFILE 또는 DEFAULT
-./toci --profile KAKAOBANK                # 특정 프로파일
-./toci --profile KAKAOBANK --region us-ashburn-1   # 리전 강제 지정 (기본: 프로파일의 region)
-./toci --profile KAKAOBANK --write        # 쓰기 액션 활성화 (인스턴스 start/stop, Bastion SSH)
+./toci --profile ETEVERS                # 특정 프로파일
+./toci --profile ETEVERS --region us-ashburn-1   # 리전 강제 지정 (기본: 프로파일의 region)
+./toci --profile ETEVERS --write        # 쓰기 액션 활성화 (인스턴스 start/stop, Bastion SSH)
 ```
 
 시작하면 테넌시 루트 컴파트먼트의 Compartments 목록이 뜹니다. `Enter`로 드릴다운하고, 하위 컴파트먼트가 없으면 자동으로 그 컴파트먼트의 VCN 목록으로 넘어갑니다.

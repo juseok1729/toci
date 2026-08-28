@@ -104,7 +104,7 @@
 ### 헤더를 taws 스타일 블록으로 재구성
 
 ```
-Profile:  KAKAOBANK
+Profile:  ETEVERS
 Region:   ap-seoul-1
 Resource: Instances    wydsofficial/WYD-SOLUTION › wyd-solution-vcn
 ```
