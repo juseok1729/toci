@@ -15,7 +15,7 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 - **Instance table** with live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, public/private IP, AD/FD, and a colored RUNNING/STOPPED state badge.
 - **Security List rule viewer** — ingress/egress rules as a readable table instead of raw nested YAML.
 - **CSV export** (UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including the Security List rules table.
-- **Mermaid diagram export** — generates a `.mmd` flowchart of a VCN's subnets (nested subgraphs), the Instances/DB Systems/Autonomous DBs/Exadata VM Clusters in each, and any DRGs attached to the VCN.
+- **Mermaid architecture diagram export** — generates a `.mmd` (`architecture-beta`) diagram of a VCN's subnets, the Instances/DB Systems/Autonomous DBs/Exadata VM Clusters in each, and any DRGs attached to the VCN.
 - **LazyVim-style shortcuts popup** — press `space` for a which-key-style overlay of every binding that applies to the current screen.
 - **Region switcher**, local fuzzy filter, live refresh.
 - **Bastion SSH** — resolve an instance's private IP, create a Bastion session, and drop straight into an SSH shell.
