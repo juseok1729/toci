@@ -163,12 +163,17 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	}
 
 	fmt.Fprintf(&b, "    group vcn(cloud)%s\n", mermaidLabel(vcnName))
-	// vcnhub is the VCN-level anchor everything below connects to — without
-	// *some* edges, architecture-beta's grid layout has nothing to position
-	// sibling subnet groups from and stacks them on top of each other
-	// (confirmed live: 5 subnets with no edges between them rendered fully
-	// overlapping in Notion). One hub every subnet (and any DRG) connects
-	// to gives the layout a star pattern to resolve instead.
+	// vcnhub anchors a layout chain through every DRG and subnet below —
+	// without *some* edges, architecture-beta's grid layout has nothing to
+	// position sibling subnet groups from and stacks them on top of each
+	// other (confirmed live: 5 subnets with no edges rendered fully
+	// overlapping in Notion). A star (everything connected straight to the
+	// hub) was the first fix, but with only 4 sides (R/L/T/B) a 5th+ subnet
+	// has to reuse a side already claimed by another — confirmed live too:
+	// subnet 0 and subnet 4 landed on the same "R" port and collided the
+	// same way. A chain — vcnhub → drg0 → drg1 → sub0 → sub1 → ... — never
+	// reuses a port on the same node no matter how many there are, since
+	// each hop is a fresh pair of nodes.
 	b.WriteString("    junction vcnhub in vcn\n")
 
 	// anchor per subnet: its first service if it has one, otherwise its own
@@ -191,15 +196,18 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 		}
 	}
 
-	// Cycle through all four sides so subnets radiate in different
-	// directions from the hub rather than all competing for the same port.
 	sides := [4][2]string{{"R", "L"}, {"L", "R"}, {"T", "B"}, {"B", "T"}}
-	for i, anchor := range subnetAnchor {
-		side := sides[i%len(sides)]
-		fmt.Fprintf(&b, "    vcnhub:%s --> %s:%s\n", side[0], side[1], anchor)
+	prev, step := "vcnhub", 0
+	chain := func(to string) {
+		side := sides[step%len(sides)]
+		fmt.Fprintf(&b, "    %s:%s --> %s:%s\n", prev, side[0], side[1], to)
+		prev, step = to, step+1
 	}
 	for i := range drgNames {
-		fmt.Fprintf(&b, "    drg%d:R --> L:vcnhub\n", i)
+		chain(fmt.Sprintf("drg%d", i))
+	}
+	for _, anchor := range subnetAnchor {
+		chain(anchor)
 	}
 
 	return b.String(), nil
