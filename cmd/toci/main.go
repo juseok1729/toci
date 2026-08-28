@@ -13,13 +13,18 @@ import (
 	"toci/internal/registry"
 )
 
+// version is set via -ldflags "-X main.version=..." when building a
+// release binary; "dev" otherwise (e.g. `go run`/local builds).
+var version = "dev"
+
 func main() {
 	var profile, region string
 	var write bool
 
 	root := &cobra.Command{
-		Use:   "toci",
-		Short: "Terminal UI for Oracle Cloud Infrastructure",
+		Use:     "toci",
+		Short:   "Terminal UI for Oracle Cloud Infrastructure",
+		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if profile == "" {
 				profile = os.Getenv("OCI_CLI_PROFILE")

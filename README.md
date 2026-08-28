@@ -28,19 +28,41 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 
 ## Installation
 
+The binary is a static, pure-Go executable — no runtime dependencies beyond your `~/.oci/config`.
+
+### From a Release
+
+```bash
+curl -sL https://github.com/juseok1729/toci/releases/latest/download/toci-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv toci /usr/local/bin/
+```
+
+Swap the filename for your platform — available targets on the [Releases page](https://github.com/juseok1729/toci/releases/latest):
+
+| Platform | Target |
+| --- | --- |
+| Linux x86_64 | `toci-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux arm64 | `toci-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS Intel | `toci-x86_64-apple-darwin.tar.gz` |
+| macOS Apple Silicon | `toci-aarch64-apple-darwin.tar.gz` |
+
+Each release also ships a `checksums.txt` for verification.
+
+### From Source
+
 ```bash
 git clone git@github.com:juseok1729/toci.git
 cd toci
 go build -o toci ./cmd/toci
 ```
 
-For a smaller distributable binary:
+For a smaller binary (this is what the release builds use):
 
 ```bash
 go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 ```
 
-The binary is a static, pure-Go executable — no runtime dependencies beyond your `~/.oci/config`. Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARCH=arm64 go build ...`).
+Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARCH=arm64 go build ...`).
 
 ## Quick Start
 

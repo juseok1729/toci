@@ -28,19 +28,41 @@
 
 ## 설치
 
+순수 Go로 작성된 정적 바이너리라 `~/.oci/config` 외에 별도 런타임 의존성이 없습니다.
+
+### 릴리즈에서 설치
+
+```bash
+curl -sL https://github.com/juseok1729/toci/releases/latest/download/toci-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv toci /usr/local/bin/
+```
+
+본인 플랫폼에 맞는 파일명으로 바꾸면 됩니다 — [Releases 페이지](https://github.com/juseok1729/toci/releases/latest)에서 확인 가능한 타겟:
+
+| 플랫폼 | 타겟 |
+| --- | --- |
+| Linux x86_64 | `toci-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux arm64 | `toci-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS Intel | `toci-x86_64-apple-darwin.tar.gz` |
+| macOS Apple Silicon | `toci-aarch64-apple-darwin.tar.gz` |
+
+각 릴리즈엔 검증용 `checksums.txt`도 같이 올라갑니다.
+
+### 소스에서 빌드
+
 ```bash
 git clone git@github.com:juseok1729/toci.git
 cd toci
 go build -o toci ./cmd/toci
 ```
 
-배포용으로 바이너리 크기를 줄이려면:
+바이너리 크기를 줄이려면(릴리즈 빌드도 이 옵션을 씁니다):
 
 ```bash
 go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 ```
 
-순수 Go로 작성된 정적 바이너리라 `~/.oci/config` 외에 별도 런타임 의존성이 없습니다. 다른 플랫폼용으로는 `GOOS`/`GOARCH`로 크로스 컴파일하면 됩니다 (예: `GOOS=darwin GOARCH=arm64 go build ...`).
+다른 플랫폼용으로는 `GOOS`/`GOARCH`로 크로스 컴파일하면 됩니다 (예: `GOOS=darwin GOARCH=arm64 go build ...`).
 
 ## 빠른 시작
 
