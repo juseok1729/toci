@@ -40,6 +40,7 @@ const (
 	modeConfirm
 	modePrompt
 	modeSidebar
+	modeSplash
 )
 
 type rowsMsg struct {
@@ -131,6 +132,17 @@ type Model struct {
 
 	sidebarHidden bool
 
+	// splashProgress/splashFrame drive the startup splash screen's fake
+	// progress bar and spinner — "fake" because the only real signal is a
+	// single List call finishing; a ticking bar reads as alive instead of
+	// stalling on an indeterminate wait. splashProgress is capped at 90
+	// until splashDataReady (the real load finished), so on a fast
+	// connection the splash still holds for a minimum ~2s instead of
+	// flashing by in whatever the API round-trip happened to take.
+	splashProgress  int
+	splashFrame     int
+	splashDataReady bool
+
 	width, height int
 
 	// tableHeight is the *logical* height last passed to table.WithHeight/
@@ -169,11 +181,12 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 		writeEnabled: writeEnabled,
 		loading:      true,
 		autoRedirect: true,
+		mode:         modeSplash,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.load(), m.fetchRootName())
+	return tea.Batch(m.load(), m.fetchRootName(), splashTickCmd())
 }
 
 func (m Model) current() registry.Resource {
@@ -573,7 +586,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTable(m.displayRows)
 		return m, nil
 
+	case splashTickMsg:
+		if m.mode != modeSplash {
+			return m, nil
+		}
+		m.splashFrame++
+		cap := 90
+		if m.splashDataReady {
+			cap = 100
+		}
+		if m.splashProgress < cap {
+			m.splashProgress += 6
+		}
+		if m.splashDataReady && m.splashProgress >= 100 {
+			m.mode = modeTable
+			return m, nil
+		}
+		return m, splashTickCmd()
+
 	case rowsMsg:
+		if m.mode == modeSplash {
+			m.splashDataReady = true
+		}
 		m.loading = false
 		m.err = msg.err
 		if msg.err == nil {
@@ -676,6 +710,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch m.mode {
+		case modeSplash:
+			if msg.String() == "q" || msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			return m, nil
 		case modeDetail:
 			return m.updateDetail(msg)
 		case modePicker:
@@ -1025,6 +1064,10 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.mode == modeSplash {
+		return renderSplash(m)
+	}
+
 	var b strings.Builder
 
 	b.WriteString(pathStyle.Render("Profile:  "))

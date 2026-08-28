@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/toci-logo.png" alt="toci logo" width="480">
+</p>
+
 # toci
 
 A fast, keyboard-driven terminal UI for browsing and managing Oracle Cloud Infrastructure (OCI) — compartments, compute, networking, and database resources — without leaving your terminal.
