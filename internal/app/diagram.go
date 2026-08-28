@@ -171,6 +171,15 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	}
 	b.WriteString("  end\n")
 
+	// Sibling subgraphs have no edges between them, so dagre treats each as
+	// its own component and spreads them left-to-right — with several
+	// subnets that runs the whole diagram off the page. Chaining them with
+	// invisible links forces a top-to-bottom stack instead, bounding the
+	// width to the widest single subnet rather than the sum of all of them.
+	for i := 1; i < len(subnetOrder); i++ {
+		fmt.Fprintf(&b, "  sub%d ~~~ sub%d\n", i-1, i)
+	}
+
 	for i := range drgNames {
 		fmt.Fprintf(&b, "  drg%d --> vcn\n", i)
 	}
