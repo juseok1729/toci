@@ -15,7 +15,7 @@
 - **Instance 테이블** — 실시간 CPU%/MEM%(OCI Monitoring), OCPU/메모리 스펙, Public/Private IP, AD/FD, RUNNING/STOPPED 상태를 배경색으로 표시.
 - **Security List 규칙 뷰어** — ingress/egress 규칙을 중첩된 YAML 대신 읽기 쉬운 표로 보여줍니다.
 - **CSV export** (UTF-8 BOM 포함, 엑셀에서 한글 안 깨짐) — 현재 화면에 보이는 내용 그대로 저장 (Security List 규칙 표도 export 가능).
-- **Mermaid 다이어그램 export** — VCN의 서브넷별 구성도를 `.mmd` 파일로 생성합니다.
+- **Mermaid 아키텍처 다이어그램 export** — VCN의 서브넷별 구성(Instance/DB System/Autonomous DB/Exadata VM Cluster)과 그 VCN에 붙어있는 DRG까지 `architecture-beta` 문법의 `.mmd` 파일로 생성합니다.
 - **LazyVim 스타일 단축키 팝업** — `space`를 누르면 현재 화면에서 쓸 수 있는 모든 단축키가 우측 하단에 뜹니다.
 - **리전 전환**, 로컬 퍼지 필터, 실시간 새로고침.
 - **Bastion SSH** — 인스턴스의 private IP를 조회하고 Bastion 세션을 생성한 뒤 바로 SSH 셸로 진입합니다.

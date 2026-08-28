@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
 
 	"toci/internal/clients"
@@ -20,19 +21,25 @@ type diagramMsg struct {
 }
 
 // diagramNode is one leaf resource (Instance/DbSystem/ADB/Exadata) placed
-// under a subnet in the generated diagram.
+// under a subnet in the generated diagram. icon must be one of the
+// architecture-beta built-in icons (cloud/database/disk/internet/server) —
+// anything else needs an external icon pack registered in whatever renders
+// the .mmd, which we can't assume.
 type diagramNode struct {
 	icon  string
 	label string
 }
 
 // buildVcnDiagram assembles the currently VCN-filtered Instances, DB
-// Systems, Autonomous DBs, and Exadata VM Clusters into a Mermaid graph,
-// grouped by the subnet each sits in. It's its own tea.Cmd (not called
-// inline from the key handler) because it makes several fresh List calls
-// independent of whatever's currently loaded in the table — Subnets, the
-// VNIC-to-subnet join for Instances, and the three database resources —
-// so it belongs off the UI goroutine like any other API-driven action.
+// Systems, Autonomous DBs, Exadata VM Clusters, and any DRGs attached to
+// the VCN into a Mermaid architecture-beta diagram, grouped by the subnet
+// each sits in (DRGs sit outside the VCN, connected to it — they attach to
+// the VCN as a whole, not to any one subnet). It's its own tea.Cmd (not
+// called inline from the key handler) because it makes several fresh List
+// calls independent of whatever's currently loaded in the table — Subnets,
+// the VNIC-to-subnet join for Instances, the three database resources, and
+// DRG attachments — so it belongs off the UI goroutine like any other
+// API-driven action.
 func (m Model) buildVcnDiagram() tea.Cmd {
 	factory := m.factory
 	scope := m.scope // already carries VcnID from the active VCN filter
@@ -51,6 +58,34 @@ func (m Model) buildVcnDiagram() tea.Cmd {
 		}
 		return diagramMsg{path: path}
 	}
+}
+
+// attachedDrgIDs returns the OCIDs of every DRG attached to vcnID, via
+// ListDrgAttachments(vcnId=...) — a DRG attachment is a compartment-level
+// object, not a field on either the DRG or the VCN itself.
+func attachedDrgIDs(ctx context.Context, vnClient core.VirtualNetworkClient, compartmentID, vcnID string) (map[string]bool, error) {
+	out := make(map[string]bool)
+	page := ""
+	for {
+		req := core.ListDrgAttachmentsRequest{CompartmentId: &compartmentID, VcnId: &vcnID}
+		if page != "" {
+			req.Page = &page
+		}
+		resp, err := vnClient.ListDrgAttachments(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range resp.Items {
+			if a.DrgId != nil {
+				out[*a.DrgId] = true
+			}
+		}
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = *resp.OpcNextPage
+	}
+	return out, nil
 }
 
 func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope registry.Scope, vcnName string) (string, error) {
@@ -77,7 +112,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 		if instSubnets, err := registry.InstanceSubnetIDs(ctx, computeClient, scope.CompartmentID); err == nil {
 			if instRows, err := fetchAll(ctx, registry.NewInstanceResource(factory), scope); err == nil {
 				for _, row := range instRows {
-					add(instSubnets[row.ID], "🖥", row.Name)
+					add(instSubnets[row.ID], "server", row.Name)
 				}
 			}
 		}
@@ -86,7 +121,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	if dbRows, err := fetchAll(ctx, registry.NewDbSystemResource(factory), scope); err == nil {
 		for _, row := range dbRows {
 			if d, ok := row.Raw.(database.DbSystemSummary); ok {
-				add(deref(d.SubnetId), "🗄", row.Name)
+				add(deref(d.SubnetId), "database", row.Name)
 			}
 		}
 	}
@@ -94,7 +129,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	if adbRows, err := fetchAll(ctx, registry.NewAutonomousDatabaseResource(factory), scope); err == nil {
 		for _, row := range adbRows {
 			if a, ok := row.Raw.(database.AutonomousDatabaseSummary); ok {
-				add(deref(a.SubnetId), "☁", row.Name)
+				add(deref(a.SubnetId), "database", row.Name)
 			}
 		}
 	}
@@ -102,29 +137,57 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	if exaRows, err := fetchAll(ctx, registry.NewCloudVmClusterResource(factory), scope); err == nil {
 		for _, row := range exaRows {
 			if c, ok := row.Raw.(database.CloudVmClusterSummary); ok {
-				add(deref(c.SubnetId), "💾", row.Name)
+				add(deref(c.SubnetId), "database", row.Name)
+			}
+		}
+	}
+
+	var drgNames []string
+	if vnClient, err := factory.VirtualNetwork(scope.Region); err == nil {
+		if drgIDs, err := attachedDrgIDs(ctx, vnClient, scope.CompartmentID, scope.VcnID); err == nil && len(drgIDs) > 0 {
+			if drgRows, err := fetchAll(ctx, registry.NewDrgResource(factory), registry.Scope{Region: scope.Region, CompartmentID: scope.CompartmentID}); err == nil {
+				for _, row := range drgRows {
+					if drgIDs[row.ID] {
+						drgNames = append(drgNames, row.Name)
+					}
+				}
 			}
 		}
 	}
 
 	var b strings.Builder
-	b.WriteString("graph TD\n")
-	fmt.Fprintf(&b, "  VCN[\"🌐 %s\"]\n", mermaidEscape(vcnName))
+	b.WriteString("architecture-beta\n")
+
+	for i, name := range drgNames {
+		fmt.Fprintf(&b, "    service drg%d(internet)[%s]\n", i, mermaidEscape(name))
+	}
+
+	fmt.Fprintf(&b, "    group vcn(cloud)[%s]\n", mermaidEscape(vcnName))
+	if len(drgNames) > 0 {
+		// DRGs attach to the VCN as a whole, not to any one subnet — this
+		// junction is the VCN-level anchor point their edges connect to.
+		b.WriteString("    junction vcnhub in vcn\n")
+	}
+
 	for i, subnetID := range subnetOrder {
-		subNode := fmt.Sprintf("SUB%d", i)
-		fmt.Fprintf(&b, "  %s[\"%s\"]\n", subNode, mermaidEscape(subnetName[subnetID]))
-		fmt.Fprintf(&b, "  VCN --> %s\n", subNode)
+		subNode := fmt.Sprintf("sub%d", i)
+		fmt.Fprintf(&b, "    group %s(cloud)[%s] in vcn\n", subNode, mermaidEscape(subnetName[subnetID]))
 		for j, n := range bySubnet[subnetID] {
 			resNode := fmt.Sprintf("%s_%d", subNode, j)
-			fmt.Fprintf(&b, "  %s[\"%s %s\"]\n", resNode, n.icon, mermaidEscape(n.label))
-			fmt.Fprintf(&b, "  %s --> %s\n", subNode, resNode)
+			fmt.Fprintf(&b, "    service %s(%s)[%s] in %s\n", resNode, n.icon, mermaidEscape(n.label), subNode)
 		}
 	}
+
+	for i := range drgNames {
+		fmt.Fprintf(&b, "    drg%d:R --> L:vcnhub\n", i)
+	}
+
 	return b.String(), nil
 }
 
 // mermaidEscape keeps a resource's display name from breaking out of its
-// quoted node label.
+// [label] brackets.
 func mermaidEscape(s string) string {
-	return strings.ReplaceAll(s, `"`, `#quot;`)
+	r := strings.NewReplacer(`"`, `#quot;`, "[", "(", "]", ")")
+	return r.Replace(s)
 }
