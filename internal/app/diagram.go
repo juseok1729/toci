@@ -163,21 +163,41 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	}
 
 	fmt.Fprintf(&b, "    group vcn(cloud)%s\n", mermaidLabel(vcnName))
-	if len(drgNames) > 0 {
-		// DRGs attach to the VCN as a whole, not to any one subnet — this
-		// junction is the VCN-level anchor point their edges connect to.
-		b.WriteString("    junction vcnhub in vcn\n")
-	}
+	// vcnhub is the VCN-level anchor everything below connects to — without
+	// *some* edges, architecture-beta's grid layout has nothing to position
+	// sibling subnet groups from and stacks them on top of each other
+	// (confirmed live: 5 subnets with no edges between them rendered fully
+	// overlapping in Notion). One hub every subnet (and any DRG) connects
+	// to gives the layout a star pattern to resolve instead.
+	b.WriteString("    junction vcnhub in vcn\n")
 
+	// anchor per subnet: its first service if it has one, otherwise its own
+	// junction (an empty subnet has nothing else to hang an edge off of).
+	subnetAnchor := make([]string, len(subnetOrder))
 	for i, subnetID := range subnetOrder {
 		subNode := fmt.Sprintf("sub%d", i)
 		fmt.Fprintf(&b, "    group %s(cloud)%s in vcn\n", subNode, mermaidLabel(subnetName[subnetID]))
-		for j, n := range bySubnet[subnetID] {
+		leaves := bySubnet[subnetID]
+		for j, n := range leaves {
 			resNode := fmt.Sprintf("%s_%d", subNode, j)
 			fmt.Fprintf(&b, "    service %s(%s)%s in %s\n", resNode, n.icon, mermaidLabel(n.label), subNode)
 		}
+		if len(leaves) > 0 {
+			subnetAnchor[i] = subNode + "_0"
+		} else {
+			hub := subNode + "hub"
+			fmt.Fprintf(&b, "    junction %s in %s\n", hub, subNode)
+			subnetAnchor[i] = hub
+		}
 	}
 
+	// Cycle through all four sides so subnets radiate in different
+	// directions from the hub rather than all competing for the same port.
+	sides := [4][2]string{{"R", "L"}, {"L", "R"}, {"T", "B"}, {"B", "T"}}
+	for i, anchor := range subnetAnchor {
+		side := sides[i%len(sides)]
+		fmt.Fprintf(&b, "    vcnhub:%s --> %s:%s\n", side[0], side[1], anchor)
+	}
 	for i := range drgNames {
 		fmt.Fprintf(&b, "    drg%d:R --> L:vcnhub\n", i)
 	}
