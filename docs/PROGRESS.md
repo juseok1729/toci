@@ -119,10 +119,11 @@ LazyVim처럼 스페이스바로 우측하단에 단축키 목록 팝업을 띄�
 ### CSV export (`e`) + Mermaid 다이어그램 export (`m`)
 
 - **`e`**: 현재 화면에 보이는(필터 적용된) 행을 리소스의 컬럼 정의 그대로 CSV로 저장 (`internal/app/export.go`). UTF-8 BOM을 붙여서 엑셀(Windows)에서 한글 안 깨지고 바로 열림. Security List에서 `v`로 규칙 테이블을 보고 있을 때도 그 규칙들을 같은 방식으로 export 가능(`m.detailExport`) — 렌더링과 export가 같은 데이터(`securityRuleRecords`)를 써서 화면과 파일이 항상 일치.
-- **`m`**(VCN 필터가 걸려있을 때만): 그 VCN의 서브넷별로 Instance/DB System/ADB/Exadata를 그룹핑하고, 그 VCN에 붙어있는 DRG까지 포함해서 Mermaid **`architecture-beta`**(단순 `graph TD`가 아니라 mermaid.js의 클라우드 아키텍처 전용 다이어그램 문법) 텍스트를 `.mmd` 파일로 저장 (`internal/app/diagram.go`). 여러 리소스를 새로 fetch해야 해서 비동기(`tea.Cmd`)로 처리.
-  - DRG는 VCN 자체에 붙는 거라(서브넷 소속이 아님) VCN 그룹 밖에 별도 `service`로 두고, VCN 그룹 안의 `junction`을 앵커 삼아 연결 — `ListDrgAttachments(vcnId=...)`로 이 VCN에 붙은 DRG만 걸러냄 (컴파트먼트의 DRG 전부를 무조건 넣지 않음).
-  - `architecture-beta`는 아이콘이 `cloud`/`database`/`disk`/`internet`/`server` 5종 내장분만 외부 아이콘팩 등록 없이 쓸 수 있어서, Instance→`server`, DB 3종(DbSystem/ADB/Exadata)→`database`, DRG→`internet`로 매핑.
-  - 문법 검증은 실제 mermaid.js 파서로 했다 — Node에서 `mermaid.parse()`를 JSDOM 위에 돌려서 두 종류(DRG 있음/없음) 실제 라이브 데이터로 만든 `.mmd`가 전부 `diagramType: "architecture"`로 정상 파싱되는 것 확인. 완전한 SVG 렌더(`mmdc`)까지는 이 샌드박스에 Chromium 의존 시스템 라이브러리(`libasound.so.2`)가 없어서(sudo 필요) 못 봤지만, 파서 검증만으로도 문법 정확성은 충분히 확인됨.
+- **`m`**(VCN 필터가 걸려있을 때만): 그 VCN의 서브넷별로 Instance/DB System/ADB/Exadata를 그룹핑하고, 그 VCN에 붙어있는 DRG까지 포함해서 Mermaid `.mmd` 파일로 저장 (`internal/app/diagram.go`). 여러 리소스를 새로 fetch해야 해서 비동기(`tea.Cmd`)로 처리.
+  - DRG는 VCN 자체에 붙는 거라(서브넷 소속이 아님) VCN `subgraph` 밖에 별도 노드로 두고 `drgN --> vcn`처럼 **subgraph id로 직접** 엣지를 연결 — mermaid flowchart에서 subgraph id를 가리키는 엣지는 그 경계에 붙는다. `ListDrgAttachments(vcnId=...)`로 이 VCN에 붙은 DRG만 걸러냄 (컴파트먼트의 DRG 전부를 무조건 넣지 않음).
+  - **`architecture-beta`(mermaid.js의 클라우드 아키텍처 전용 문법)로 먼저 만들었다가 되돌렸다.** 실제 mermaid.js 파서(Node+JSDOM에서 `mermaid.parse()`)로는 문제없이 통과했는데, **Notion에 붙여넣으니 렌더링 에러**가 났다. 원인은 diagram 타입 미지원이 아니라 — `architecture-beta`의 `[label]`은 따옴표 없는 텍스트라서, OCI 리소스 이름처럼 하이픈이 들어간 라벨(`wyd-logistics-drg` 등)을 Notion이 쓰는 mermaid 버전의 문법이 못 받아들였음(mermaid 공식 예제가 전부 `API`/`Database`처럼 하이픈 없는 단어인 이유가 이거였다 — 따옴표(`["..."]`)를 쓰면 최신 mermaid에선 통과하지만, 구버전 호환까지 보장 못 함). 그래서 라벨을 **항상 따옴표로 감싸는** `graph TD` + `subgraph`(mermaid의 가장 오래되고 어디서나 지원되는 다이어그램 타입)로 되돌렸다 — 하이픈이든 뭐든 라벨에 안전.
+  - 노드 모양으로 리소스 종류 구분: Instance는 사각형(`[...]`), DB 3종(DbSystem/ADB/Exadata)은 실린더(`[(...)]`), DRG는 스타디움(`(...)`).
+  - 문법 검증은 두 버전 다 실제 mermaid.js 파서로 했다(Node+JSDOM `mermaid.parse()`) — 라이브 데이터(DRG 있음/없음)로 만든 `.mmd`가 각각 `architecture`/`flowchart-v2`로 정상 파싱되는 것 확인. 완전한 SVG 렌더(`mmdc`)까지는 샌드박스에 Chromium 의존 시스템 라이브러리(`libasound.so.2`)가 없어서(sudo 필요) 시도만 하고 못 봤지만, Notion 실사용 피드백으로 실제 렌더링까지 검증됨.
 - xlsx는 stdlib에 없어서 새 의존성이 필요해 스킵 — BOM CSV로 엑셀 호환 문제는 이미 해결되니 필요해지면 그때 추가.
 
 ### Security List 규칙 테이블 뷰 (`v`)
