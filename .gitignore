@@ -20,6 +20,14 @@ profile.cov
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
+# toci build output
+/toci
+/toci-*
+
+# CSV/Mermaid exports produced by running toci ("e"/"m" keys)
+*.csv
+*.mmd
+
 # Go workspace file
 go.work
 go.work.sum
