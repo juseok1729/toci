@@ -21,21 +21,16 @@ type diagramMsg struct {
 }
 
 // diagramNode is one leaf resource (Instance/DbSystem/ADB/Exadata) placed
-// under a subnet in the generated diagram. icon must be one of
-// architecture-beta's built-in icons (cloud/database/disk/internet/server)
-// — anything else needs an external icon pack registered in whatever
-// renders the .mmd, which we can't assume.
+// under a subnet in the generated diagram.
 type diagramNode struct {
-	icon  string
+	shape string
 	label string
 }
 
 // buildVcnDiagram assembles the currently VCN-filtered Instances, DB
 // Systems, Autonomous DBs, Exadata VM Clusters, and any DRGs attached to
-// the VCN into a Mermaid architecture-beta diagram, grouped by the subnet
-// each sits in (DRGs sit outside the VCN group, connected to it — they
-// attach to the VCN as a whole, not to any one subnet). It's its own
-// tea.Cmd (not called inline from the key handler) because it makes
+// the VCN into a Mermaid flowchart, grouped by the subnet each sits in. It's
+// its own tea.Cmd (not called inline from the key handler) because it makes
 // several fresh List calls independent of whatever's currently loaded in
 // the table — Subnets, the VNIC-to-subnet join for Instances, the three
 // database resources, and DRG attachments — so it belongs off the UI
@@ -102,9 +97,9 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 		subnetName[row.ID] = row.Name
 		bySubnet[row.ID] = nil
 	}
-	add := func(subnetID, icon, label string) {
+	add := func(subnetID, shape, label string) {
 		if _, ok := bySubnet[subnetID]; ok {
-			bySubnet[subnetID] = append(bySubnet[subnetID], diagramNode{icon: icon, label: label})
+			bySubnet[subnetID] = append(bySubnet[subnetID], diagramNode{shape: shape, label: label})
 		}
 	}
 
@@ -112,7 +107,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 		if instSubnets, err := registry.InstanceSubnetIDs(ctx, computeClient, scope.CompartmentID); err == nil {
 			if instRows, err := fetchAll(ctx, registry.NewInstanceResource(factory), scope); err == nil {
 				for _, row := range instRows {
-					add(instSubnets[row.ID], "server", row.Name)
+					add(instSubnets[row.ID], "rect", row.Name)
 				}
 			}
 		}
@@ -121,7 +116,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	if dbRows, err := fetchAll(ctx, registry.NewDbSystemResource(factory), scope); err == nil {
 		for _, row := range dbRows {
 			if d, ok := row.Raw.(database.DbSystemSummary); ok {
-				add(deref(d.SubnetId), "database", row.Name)
+				add(deref(d.SubnetId), "cylinder", row.Name)
 			}
 		}
 	}
@@ -129,7 +124,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	if adbRows, err := fetchAll(ctx, registry.NewAutonomousDatabaseResource(factory), scope); err == nil {
 		for _, row := range adbRows {
 			if a, ok := row.Raw.(database.AutonomousDatabaseSummary); ok {
-				add(deref(a.SubnetId), "database", row.Name)
+				add(deref(a.SubnetId), "cylinder", row.Name)
 			}
 		}
 	}
@@ -137,7 +132,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	if exaRows, err := fetchAll(ctx, registry.NewCloudVmClusterResource(factory), scope); err == nil {
 		for _, row := range exaRows {
 			if c, ok := row.Raw.(database.CloudVmClusterSummary); ok {
-				add(deref(c.SubnetId), "database", row.Name)
+				add(deref(c.SubnetId), "cylinder", row.Name)
 			}
 		}
 	}
@@ -156,68 +151,45 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 	}
 
 	var b strings.Builder
-	b.WriteString("architecture-beta\n")
+	b.WriteString("graph TD\n")
 
 	for i, name := range drgNames {
-		fmt.Fprintf(&b, "    service drg%d(internet)%s\n", i, mermaidLabel(name))
+		fmt.Fprintf(&b, "  drg%d([%s])\n", i, mermaidLabel(name))
 	}
 
-	fmt.Fprintf(&b, "    group vcn(cloud)%s\n", mermaidLabel(vcnName))
-	// vcnhub anchors a layout chain through every DRG and subnet below —
-	// without *some* edges, architecture-beta's grid layout has nothing to
-	// position sibling subnet groups from and stacks them on top of each
-	// other (confirmed live: 5 subnets with no edges rendered fully
-	// overlapping in Notion). A star (everything connected straight to the
-	// hub) was the first fix, but with only 4 sides (R/L/T/B) a 5th+ subnet
-	// has to reuse a side already claimed by another — confirmed live too:
-	// subnet 0 and subnet 4 landed on the same "R" port and collided the
-	// same way. A chain — vcnhub → drg0 → drg1 → sub0 → sub1 → ... — never
-	// reuses a port on the same node no matter how many there are, since
-	// each hop is a fresh pair of nodes.
-	b.WriteString("    junction vcnhub in vcn\n")
-
-	// anchor per subnet: its first service if it has one, otherwise its own
-	// junction (an empty subnet has nothing else to hang an edge off of).
-	subnetAnchor := make([]string, len(subnetOrder))
+	fmt.Fprintf(&b, "  subgraph vcn[%s]\n", mermaidLabel(vcnName))
 	for i, subnetID := range subnetOrder {
 		subNode := fmt.Sprintf("sub%d", i)
-		fmt.Fprintf(&b, "    group %s(cloud)%s in vcn\n", subNode, mermaidLabel(subnetName[subnetID]))
-		leaves := bySubnet[subnetID]
-		for j, n := range leaves {
+		fmt.Fprintf(&b, "    subgraph %s[%s]\n", subNode, mermaidLabel(subnetName[subnetID]))
+		for j, n := range bySubnet[subnetID] {
 			resNode := fmt.Sprintf("%s_%d", subNode, j)
-			fmt.Fprintf(&b, "    service %s(%s)%s in %s\n", resNode, n.icon, mermaidLabel(n.label), subNode)
+			b.WriteString("      ")
+			b.WriteString(shapedNode(resNode, n.shape, n.label))
+			b.WriteString("\n")
 		}
-		if len(leaves) > 0 {
-			subnetAnchor[i] = subNode + "_0"
-		} else {
-			hub := subNode + "hub"
-			fmt.Fprintf(&b, "    junction %s in %s\n", hub, subNode)
-			subnetAnchor[i] = hub
-		}
+		b.WriteString("    end\n")
 	}
+	b.WriteString("  end\n")
 
-	sides := [4][2]string{{"R", "L"}, {"L", "R"}, {"T", "B"}, {"B", "T"}}
-	prev, step := "vcnhub", 0
-	chain := func(to string) {
-		side := sides[step%len(sides)]
-		fmt.Fprintf(&b, "    %s:%s --> %s:%s\n", prev, side[0], side[1], to)
-		prev, step = to, step+1
-	}
 	for i := range drgNames {
-		chain(fmt.Sprintf("drg%d", i))
-	}
-	for _, anchor := range subnetAnchor {
-		chain(anchor)
+		fmt.Fprintf(&b, "  drg%d --> vcn\n", i)
 	}
 
 	return b.String(), nil
 }
 
-// mermaidLabel quotes a resource's display name (as architecture-beta's
-// own [label] syntax expects unquoted text and chokes on hyphens — real
-// OCI resource names are almost always hyphenated, e.g.
-// "wyd-logistics-drg") and escapes embedded quotes. Returns the bracketed
-// [label] form ready to append directly after a service/group's (icon).
+func shapedNode(id, shape, label string) string {
+	l := mermaidLabel(label)
+	switch shape {
+	case "cylinder":
+		return fmt.Sprintf("%s[(%s)]", id, l)
+	default:
+		return fmt.Sprintf("%s[%s]", id, l)
+	}
+}
+
+// mermaidLabel quotes a resource's display name and escapes embedded
+// quotes — real OCI resource names are almost always hyphenated.
 func mermaidLabel(s string) string {
-	return `["` + strings.ReplaceAll(s, `"`, `#quot;`) + `"]`
+	return `"` + strings.ReplaceAll(s, `"`, `#quot;`) + `"`
 }
