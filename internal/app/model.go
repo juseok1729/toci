@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 	"gopkg.in/yaml.v3"
 
@@ -27,7 +28,7 @@ var (
 	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	pathStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	boxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
-	selStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("39"))
+	selStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("39")).Bold(true)
 )
 
 type mode int
@@ -134,11 +135,13 @@ type Model struct {
 
 	// splashProgress/splashFrame drive the startup splash screen's fake
 	// progress bar and spinner — "fake" because the only real signal is a
-	// single List call finishing; a ticking bar reads as alive instead of
-	// stalling on an indeterminate wait. splashProgress is capped at 90
-	// until splashDataReady (the real load finished), so on a fast
-	// connection the splash still holds for a minimum ~2s instead of
-	// flashing by in whatever the API round-trip happened to take.
+	// single List call finishing; a bar that jumps through a couple of
+	// stages (see splashStages/splashTicksPerStage in splash.go) reads as
+	// alive instead of stalling on an indeterminate wait. splashProgress is
+	// held at the second-to-last stage until splashDataReady (the real load
+	// finished), so on a fast connection the splash still holds for a
+	// minimum ~1.2s instead of flashing by in whatever the API round-trip
+	// happened to take.
 	splashProgress  int
 	splashFrame     int
 	splashDataReady bool
@@ -320,13 +323,16 @@ func fitColumnWidth(header string, values []string, ceiling int) int {
 // column collapses to nothing readable.
 const tableColMinWidth = 3
 
-// fitColumns computes each column's content-fit width (fitColumnWidth), then,
-// if their combined on-screen size (content + the 2-col Cell/Header padding
-// bubbles adds per column) would exceed the available viewport width,
-// scales every column down proportionally to fit — rather than leaving
-// them at full size and letting bubbles silently crop whatever falls past
-// the right edge (which is what used to happen to trailing columns on a
-// narrower terminal or sidebar).
+// fitColumns computes each column's content-fit width (fitColumnWidth), then
+// scales every column proportionally against the available viewport width —
+// down if it's too wide, rather than leaving columns at full size and
+// letting bubbles silently crop whatever falls past the right edge; up if
+// there's slack, rather than leaving it as dead space (which is what used
+// to make the selected-row highlight stop short of the table box's right
+// edge, and left values that would otherwise fit the screen capped at "…"
+// for no reason). Scaling every column by the same ratio, instead of
+// dumping all the slack or all the shrinkage into one column, keeps the
+// table's proportions the same as the terminal grows or shrinks.
 func fitColumns(cols []registry.Column, colValues [][]string, available int) []int {
 	natural := make([]int, len(cols))
 	total := 0
@@ -334,7 +340,7 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 		natural[i] = fitColumnWidth(c.Header, colValues[i], c.Width)
 		total += natural[i] + 2
 	}
-	if available <= 0 || total <= available {
+	if available <= 0 || total == available || len(cols) == 0 {
 		return natural
 	}
 
@@ -344,15 +350,26 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 		contentAvailable = tableColMinWidth * len(cols)
 	}
 	contentTotal := total - padding
+	if contentTotal <= 0 {
+		return natural
+	}
 	scale := float64(contentAvailable) / float64(contentTotal)
 
 	widths := make([]int, len(cols))
+	sum := 0
 	for i, w := range natural {
 		nw := int(float64(w) * scale)
 		if nw < tableColMinWidth {
 			nw = tableColMinWidth
 		}
 		widths[i] = nw
+		sum += nw
+	}
+	if total < available {
+		// Integer truncation during the scale-up can leave a few columns
+		// short of contentAvailable — hand the small remainder to the last
+		// column so the row still reaches the box's right edge exactly.
+		widths[len(widths)-1] += contentAvailable - sum
 	}
 	return widths
 }
@@ -402,12 +419,24 @@ func (m *Model) setDisplayRows() {
 // see sidebarAbsFloor).
 const mainAbsFloor = 10
 
+// tableBoxOverhead is the two border columns plus the two 1-space padding
+// columns (left + right of each) renderTableBox adds around the table in
+// View() — reserved off the table's own width so the boxed table doesn't
+// overflow mainContentWidth. The padding matters here specifically: without
+// it the STATE column's colored badge (colorizeInstanceState paints its
+// whole cell, padding included) sat flush against the right border while
+// the left side still had bubbles' own column padding as a visible gap —
+// this box-level padding gives both sides the same margin regardless of
+// what's colored inside.
+const tableBoxOverhead = 4
+
 // mainContentWidth is how many columns the main panel (table/detail/status
 // line) has to work with, to the right of the sidebar.
 func (m Model) mainContentWidth() int {
 	w := m.width - sidebarTotalWidth(m)
-	if !m.sidebarHidden {
-		w -= 2 // gutter between sidebar and main content in View()
+	w -= 2 // gutter before main content in View() — sidebar box, or blank margin when hidden
+	if m.sidebarHidden {
+		w -= 2 // matching blank margin after main content, so both sides are equal once there's no sidebar box to fill that role
 	}
 	if w < mainAbsFloor {
 		w = mainAbsFloor
@@ -422,8 +451,35 @@ func (m Model) mainContentWidth() int {
 // resize events.
 func (m *Model) relayout() {
 	mainWidth := m.mainContentWidth()
-	m.table.SetWidth(mainWidth)
+	tableWidth := mainWidth - tableBoxOverhead
+	if tableWidth < mainAbsFloor {
+		tableWidth = mainAbsFloor
+	}
+	m.table.SetWidth(tableWidth)
 	m.detail.Width = mainWidth
+	m.relayoutTableColumns()
+}
+
+// relayoutTableColumns recomputes the table's column widths against its
+// (already updated) width, in place. Unlike refreshTable, this calls
+// table.Model.SetColumns directly instead of rebuilding via newTable, so it
+// doesn't reset the cursor/scroll position — a pure width change (resizing
+// the terminal, toggling the sidebar) shouldn't jump the selection back to
+// the top row the way a real row-set change (filter, reload) should.
+func (m *Model) relayoutTableColumns() {
+	cols := m.current().Columns()
+	colValues := make([][]string, len(cols))
+	for _, row := range m.displayRows {
+		for j, c := range cols {
+			colValues[j] = append(colValues[j], c.Get(row))
+		}
+	}
+	widths := fitColumns(cols, colValues, m.table.Width())
+	tcols := make([]table.Column, len(cols))
+	for i, c := range cols {
+		tcols[i] = table.Column{Title: c.Header, Width: widths[i]}
+	}
+	m.table.SetColumns(tcols)
 }
 
 func (m *Model) switchResource(idx int) tea.Cmd {
@@ -583,7 +639,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetHeight(m.tableHeight)
 		m.detail.Height = msg.Height - 6
 		m.relayout()
-		m.refreshTable(m.displayRows)
 		return m, nil
 
 	case splashTickMsg:
@@ -591,12 +646,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.splashFrame++
-		cap := 90
-		if m.splashDataReady {
-			cap = 100
+		idx := m.splashFrame / splashTicksPerStage
+		if idx >= len(splashStages) {
+			idx = len(splashStages) - 1
 		}
-		if m.splashProgress < cap {
-			m.splashProgress += 6
+		target := splashStages[idx]
+		if !m.splashDataReady && target >= 100 {
+			target = splashStages[len(splashStages)-2]
+		}
+		if target > m.splashProgress {
+			m.splashProgress = target
 		}
 		if m.splashDataReady && m.splashProgress >= 100 {
 			m.mode = modeTable
@@ -803,6 +862,12 @@ func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promptInput.CursorEnd()
 			m.promptInput.Focus()
 			m.mode = modePrompt
+		case pickerResource:
+			for i, res := range m.resources {
+				if res.Key() == item.key {
+					return m, m.switchResource(i)
+				}
+			}
 		}
 		return m, nil
 	case "up", "ctrl+k":
@@ -908,12 +973,24 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case ":":
+		if m.sidebarHidden {
+			return m, nil
+		}
 		m.openSidebar()
 		return m, nil
 
 	case "t":
 		m.sidebarHidden = !m.sidebarHidden
 		m.relayout()
+		return m, nil
+
+	case "f":
+		items := make([]pickerItem, len(m.resources))
+		for i, res := range m.resources {
+			items[i] = pickerItem{key: res.Key(), label: res.Label()}
+		}
+		m.picker = newPicker(pickerResource, "Resources", items)
+		m.mode = modePicker
 		return m, nil
 
 	case "r":
@@ -1029,18 +1106,28 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "building diagram..."
 		return m, m.buildVcnDiagram()
 
-	case "enter":
+	case "d":
 		row, ok := m.selected()
 		if !ok {
 			return m, nil
-		}
-		if m.current().Key() == "compartment" {
-			return m, m.enterCompartment(row.ID, row.Name)
 		}
 		m.mode = modeDetail
 		m.detail.SetContent(renderDetail(row))
 		m.detail.GotoTop()
 		m.detailExport = nil
+		return m, nil
+
+	case "enter":
+		row, ok := m.selected()
+		if !ok {
+			return m, nil
+		}
+		switch m.current().Key() {
+		case "compartment":
+			return m, m.enterCompartment(row.ID, row.Name)
+		case "vcn":
+			m.selectVcnFilter(row.ID, row.Name)
+		}
 		return m, nil
 
 	case "esc":
@@ -1088,8 +1175,17 @@ func (m Model) View() string {
 	}
 	b.WriteString("\n\n")
 
+	// The resource-search picker floats centered over the table instead of
+	// replacing it, so switching on m.mode alone would wrongly blank the
+	// table out from under it — render as if modeTable and overlay it after
+	// composing the full view below.
+	renderMode := m.mode
+	if renderMode == modePicker && m.picker.kind == pickerResource {
+		renderMode = modeTable
+	}
+
 	var main strings.Builder
-	switch m.mode {
+	switch renderMode {
 	case modeDetail:
 		main.WriteString(m.detail.View())
 		main.WriteString("\n")
@@ -1123,7 +1219,7 @@ func (m Model) View() string {
 			if m.current().Key() == "instance" {
 				tableView = colorizeInstanceState(tableView, m.table.Columns())
 			}
-			main.WriteString(tableView)
+			main.WriteString(m.renderTableBox(tableView))
 		}
 		main.WriteString("\n")
 		// MaxWidth clips rather than lets the terminal soft-wrap: an
@@ -1142,12 +1238,20 @@ func (m Model) View() string {
 	}
 
 	if m.sidebarHidden {
-		b.WriteString(main.String())
+		// Blank margins on both sides standing in for the sidebar box, so
+		// the table isn't flush against either edge of the terminal — the
+		// left one matches the "  " gutter the visible branch below puts
+		// between the box and main, and the right one mirrors it so the
+		// table box is centered instead of flush against the right edge.
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, "  ", main.String(), "  "))
 	} else {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, m.renderSidebar(), "  ", main.String()))
 	}
 
 	out := b.String()
+	if m.mode == modePicker && m.picker.kind == pickerResource {
+		out = overlayCenter(out, m.renderResourceSearch(), m.width, m.height)
+	}
 	if m.showHelp {
 		out = overlayBottomRight(out, renderHelpBox(m), m.width)
 	}
@@ -1174,6 +1278,87 @@ func (m Model) renderPicker() string {
 		b.WriteString(statusStyle.Render("  (no matches)"))
 	}
 	return boxStyle.Render(b.String())
+}
+
+// renderResourceSearch draws the "f" resource-search picker as a wide,
+// Telescope-style box: a fixed width (not sized to content, unlike
+// renderPicker) with the title and match count punched into the top border
+// and a divider between the input and the results.
+func (m Model) renderResourceSearch() string {
+	width := m.width * 3 / 5
+	if width < 50 {
+		width = 50
+	}
+	if max := m.width - 4; width > max {
+		width = max
+	}
+	// Terminal narrower than the box's floor (or not yet sized, e.g. before
+	// the first WindowSizeMsg) — clamp instead of a negative Repeat count.
+	if width < 20 {
+		width = 20
+	}
+
+	var b strings.Builder
+	b.WriteString("> ")
+	b.WriteString(m.picker.input.View())
+	b.WriteString("\n")
+	b.WriteString(strings.Repeat("─", width-2))
+	b.WriteString("\n")
+	for i, it := range m.picker.filtered {
+		line := it.label
+		if i == m.picker.cursor {
+			line = selStyle.Render("› " + line)
+		} else {
+			line = "  " + line
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	if len(m.picker.filtered) == 0 {
+		b.WriteString(statusStyle.Render("  (no matches)"))
+	}
+
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("39")). // titleStyle's accent color
+		Width(width).
+		Padding(0, 1)
+	lines := strings.Split(style.Render(strings.TrimRight(b.String(), "\n")), "\n")
+
+	title := titleStyle.Render(" " + m.picker.title + " ")
+	topWidth := ansi.StringWidth(lines[0])
+	titleX := (topWidth - ansi.StringWidth(title)) / 2
+	lines[0] = embedInLine(lines[0], title, titleX)
+
+	count := statusStyle.Render(fmt.Sprintf(" %d/%d ", len(m.picker.filtered), len(m.picker.items)))
+	countX := topWidth - ansi.StringWidth(count) - 1
+	if countX > titleX+ansi.StringWidth(title) {
+		lines[0] = embedInLine(lines[0], count, countX)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderTableBox draws the k9s-style bounding box around the resource
+// table: an accent-colored rounded border with the resource label and row
+// count punched into the center of its top edge. relayout reserves
+// tableBoxOverhead columns off the table's own width for this border, so it
+// never has to grow tableView to fit — it just wraps whatever's there.
+func (m Model) renderTableBox(tableView string) string {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("39")).
+		Padding(0, 1)
+	lines := strings.Split(style.Render(tableView), "\n")
+
+	title := titleStyle.Render(fmt.Sprintf(" %s [%d] ", m.current().Label(), len(m.displayRows)))
+	topWidth := ansi.StringWidth(lines[0])
+	x := (topWidth - ansi.StringWidth(title)) / 2
+	if x < 0 {
+		x = 0
+	}
+	lines[0] = embedInLine(lines[0], title, x)
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderConfirm() string {
@@ -1205,8 +1390,11 @@ func (m Model) helpEntries() []helpEntry {
 	add := func(key, desc string) { entries = append(entries, helpEntry{key, desc}) }
 
 	add("j/k, ↑↓", "move")
-	add("enter", "select")
-	add(":", "resource tree")
+	if m.current().Key() == "compartment" {
+		add("enter", "descend")
+	}
+	add("d", "detail")
+	add("f", "search resources")
 	add("/", "filter")
 	add("r", "region")
 	add("R", "refresh")
@@ -1218,6 +1406,7 @@ func (m Model) helpEntries() []helpEntry {
 		add("t", "show tree")
 	} else {
 		add("t", "hide tree")
+		add(":", "focus tree")
 	}
 	if _, ok := m.actionable(); ok {
 		if m.writeEnabled {
@@ -1234,7 +1423,7 @@ func (m Model) helpEntries() []helpEntry {
 		}
 	}
 	if m.current().Key() == "vcn" {
-		add("i", "filter by this VCN")
+		add("enter / i", "filter by this VCN")
 	}
 	if m.current().Key() == "security-list" {
 		add("v", "view rules")

@@ -35,6 +35,47 @@ func TestRenderSplash(t *testing.T) {
 	}
 }
 
+func TestSplashProgressStagesAndHold(t *testing.T) {
+	m := Model{mode: modeSplash}
+	holdCap := splashStages[len(splashStages)-2]
+
+	seen := map[int]bool{}
+	for range 200 {
+		mi, _ := m.Update(splashTickMsg{})
+		m = mi.(Model)
+		seen[m.splashProgress] = true
+		if m.splashProgress > holdCap {
+			t.Fatalf("splashProgress reached %d before splashDataReady, want capped at %d", m.splashProgress, holdCap)
+		}
+		if m.mode != modeSplash {
+			t.Fatalf("mode left modeSplash before splashDataReady")
+		}
+	}
+	for _, want := range splashStages[:len(splashStages)-1] {
+		if !seen[want] {
+			t.Errorf("splashProgress never hit stage value %d, got values %v", want, seen)
+		}
+	}
+	if seen[100] {
+		t.Error("splashProgress hit 100 before splashDataReady was set")
+	}
+
+	m.splashDataReady = true
+	for range 100 {
+		if m.mode != modeSplash {
+			break
+		}
+		mi, _ := m.Update(splashTickMsg{})
+		m = mi.(Model)
+	}
+	if m.mode != modeTable {
+		t.Errorf("mode = %v after splashDataReady, want modeTable", m.mode)
+	}
+	if m.splashProgress != 100 {
+		t.Errorf("splashProgress = %d when leaving splash, want 100", m.splashProgress)
+	}
+}
+
 func TestAsciiLogoRowsSameWidth(t *testing.T) {
 	rows := strings.Split(asciiLogo, "\n")
 	width := len([]rune(rows[0]))

@@ -56,26 +56,55 @@ func renderHelpBox(m Model) string {
 // region instead of a single line's column range. termWidth is the full
 // terminal width box's right edge should align to.
 func overlayBottomRight(base, box string, termWidth int) string {
-	boxLines := strings.Split(box, "\n")
-	boxWidth := 0
-	for _, l := range boxLines {
-		if w := ansi.StringWidth(l); w > boxWidth {
-			boxWidth = w
+	boxWidth, boxLines := overlayBoxDims(box)
+	baseLines := strings.Split(base, "\n")
+	return spliceOverlay(baseLines, boxLines, termWidth-boxWidth, len(baseLines)-len(boxLines))
+}
+
+// overlayCenter splices box onto an already-rendered view, centered
+// horizontally and a third of the way down vertically (rather than dead
+// center — reads better above a table that already draws the eye toward
+// its top) — same ansi.Cut-based splicing as overlayBottomRight. Used for
+// the "f" resource-search picker, which floats over the table rather than
+// replacing it.
+func overlayCenter(base, box string, termWidth, termHeight int) string {
+	boxWidth, boxLines := overlayBoxDims(box)
+	baseLines := strings.Split(base, "\n")
+	x := (termWidth - boxWidth) / 2
+	y := (termHeight - len(boxLines)) / 3
+	return spliceOverlay(baseLines, boxLines, x, y)
+}
+
+func overlayBoxDims(box string) (width int, lines []string) {
+	lines = strings.Split(box, "\n")
+	for _, l := range lines {
+		if w := ansi.StringWidth(l); w > width {
+			width = w
 		}
 	}
-	x := termWidth - boxWidth
+	return width, lines
+}
+
+// embedInLine punches label into an already-rendered line at column x,
+// keeping the line's original content on both sides — used to set a title
+// or a right-aligned count into a box's border line, the same left+mid+right
+// splice colorizeInstanceState uses for a table cell.
+func embedInLine(line, label string, x int) string {
+	w := ansi.StringWidth(label)
+	left := ansi.Cut(line, 0, x)
+	right := ansi.Cut(line, x+w, 1<<20)
+	return left + label + right
+}
+
+func spliceOverlay(baseLines, boxLines []string, x, y int) string {
 	if x < 0 {
 		x = 0
 	}
-
-	baseLines := strings.Split(base, "\n")
-	startRow := len(baseLines) - len(boxLines)
-	if startRow < 0 {
-		startRow = 0
+	if y < 0 {
+		y = 0
 	}
-
 	for i, boxLine := range boxLines {
-		row := startRow + i
+		row := y + i
 		if row < 0 || row >= len(baseLines) {
 			continue
 		}

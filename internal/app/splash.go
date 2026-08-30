@@ -19,7 +19,20 @@ const asciiLogo = `████████╗ ██████╗  ███�
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-const splashBarWidth = 40
+const splashBarWidth = 70
+
+// splashStages are the discrete levels the fake progress bar jumps through
+// (10% -> 30% -> 60%) instead of creeping up one tick at a time — every
+// splashTicksPerStage ticks it advances to the next value. The bar holds at
+// the second-to-last value (60%) until the real load finishes (see
+// splashDataReady in model.go), then the tick after that snaps straight to
+// 100% — no intermediate step for that last jump.
+var splashStages = []int{10, 30, 60, 100}
+
+// splashTicksPerStage * (len(splashStages)-1) * the 60ms tick interval is
+// the minimum time the splash holds before it's allowed to complete
+// (~1.2s): 7 * 3 * 60ms = 1260ms.
+const splashTicksPerStage = 7
 
 type splashTickMsg struct{}
 

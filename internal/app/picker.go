@@ -11,6 +11,7 @@ const (
 	pickerRegion pickerKind = iota
 	pickerAction
 	pickerBastion
+	pickerResource
 )
 
 type pickerItem struct {
@@ -18,8 +19,8 @@ type pickerItem struct {
 	label string
 }
 
-// picker is a fuzzy-filtered list overlay reused for both the ":" resource
-// switcher and the region switcher.
+// picker is a fuzzy-filtered list overlay reused for the region switcher,
+// the action menu, the bastion picker, and the "f" resource search.
 type picker struct {
 	kind     pickerKind
 	title    string
@@ -32,6 +33,7 @@ type picker struct {
 func newPicker(kind pickerKind, title string, items []pickerItem) picker {
 	ti := textinput.New()
 	ti.Placeholder = "type to filter..."
+	ti.Prompt = "" // renderPicker/renderResourceSearch draw their own "> " prefix
 	ti.Focus()
 	return picker{kind: kind, title: title, input: ti, items: items, filtered: items}
 }

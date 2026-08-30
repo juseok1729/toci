@@ -84,16 +84,18 @@ On startup you'll land on the tenancy root's Compartments list. Drill down with 
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrow keys) | Move up/down |
-| `Enter` | Compartment: descend · VCN: view detail · everything else: view detail (YAML) |
+| `Enter` | Compartment: descend · VCN: filter all VCN-scoped resources to it (same as `i`) · everything else: no-op |
+| `d` | View detail (YAML) for the selected row, any resource kind |
 | `Esc` | Close detail → clear filter → back out of a VCN filter → go up a compartment (whichever applies first) |
 | `Tab` | Cycle to the next resource kind |
-| `:` | Focus the sidebar resource tree |
+| `f` | Search resource kinds in a centered picker and jump to one |
+| `t` | Show/hide the sidebar tree |
+| `:` | *(sidebar visible only)* Focus the sidebar tree, vim-tree style |
 | `/` | Filter the current list by name |
 | `r` | Switch region (subscribed regions only) |
 | `R` | Refresh the current list |
-| `t` | Show/hide the sidebar |
 | `e` | Export the current view to CSV (UTF-8 BOM) |
-| `i` | *(on a VCN row)* Filter all VCN-scoped resources to this VCN |
+| `i` | *(on a VCN row)* Filter all VCN-scoped resources to this VCN (same as `Enter`) |
 | `v` | *(on a Security List row)* View ingress/egress rules as a table |
 | `m` | *(with a VCN filter active)* Export a Mermaid diagram of the VCN's topology |
 | `a` | *(Instance, `--write` only)* Action menu — start/stop, with a type-to-confirm prompt |
@@ -105,6 +107,7 @@ On startup you'll land on the tenancy root's Compartments list. Drill down with 
 
 - [`docs/USAGE.md`](docs/USAGE.md) — original usage notes (Korean)
 - [`docs/PROGRESS.md`](docs/PROGRESS.md) — implementation log and design decisions (Korean)
+- [`docs/COLOR_SYSTEM.md`](docs/COLOR_SYSTEM.md) — color system reference (Korean)
 
 ## License
 

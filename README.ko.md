@@ -84,16 +84,18 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 | 키 | 동작 |
 | --- | --- |
 | `j` / `k` (또는 방향키) | 위/아래 이동 |
-| `Enter` | Compartment: 하위 진입 · VCN: 상세 보기 · 그 외: 상세(YAML) 보기 |
+| `Enter` | Compartment: 하위 진입 · VCN: 이 VCN 기준으로 필터링 (`i`와 동일) · 그 외: 동작 없음 |
+| `d` | 선택한 행의 상세(YAML) 보기 — 모든 리소스 종류 |
 | `Esc` | 상세 닫기 → 필터 해제 → VCN 필터 해제 → 상위 컴파트먼트로 (해당되는 첫 번째 동작 실행) |
 | `Tab` | 다음 리소스 종류로 순환 전환 |
-| `:` | 사이드바 리소스 트리로 포커스 이동 |
+| `f` | 중앙 검색창에서 리소스 종류를 검색해서 진입 |
+| `t` | 사이드바 트리 표시/숨김 |
+| `:` | *(트리가 보일 때만)* 사이드바 트리로 포커스 이동 — vim 폴더트리처럼 |
 | `/` | 현재 목록을 이름으로 필터링 |
 | `r` | 리전 전환 (구독된 리전만) |
 | `R` | 현재 목록 새로고침 |
-| `t` | 사이드바 표시/숨김 |
 | `e` | 현재 화면을 CSV로 export (UTF-8 BOM 포함) |
-| `i` | *(VCN 행에서)* 모든 VCN-scoped 리소스를 이 VCN 기준으로 필터링 |
+| `i` | *(VCN 행에서)* 모든 VCN-scoped 리소스를 이 VCN 기준으로 필터링 (`Enter`와 동일) |
 | `v` | *(Security List 행에서)* ingress/egress 규칙을 표로 보기 |
 | `m` | *(VCN 필터가 걸려있을 때)* 그 VCN의 구성도를 Mermaid로 export |
 | `a` | *(Instance, `--write` 필요)* 액션 메뉴 — start/stop, 타이핑 확인 필요 |
@@ -105,6 +107,7 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 
 - [`docs/USAGE.md`](docs/USAGE.md) — 초기 사용 가이드
 - [`docs/PROGRESS.md`](docs/PROGRESS.md) — 구현 현황 및 설계 결정 기록
+- [`docs/COLOR_SYSTEM.md`](docs/COLOR_SYSTEM.md) — 컬러 시스템 문서
 
 ## 라이선스
 
