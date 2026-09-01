@@ -2,6 +2,33 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.4
+
+### 사이드바 트리 제거, VCN 선택 시 검색창 직결
+
+- `internal/app/sidebar.go` 통째로 삭제 — `t`/`modeSidebar`/트리 렌더링 전부 제거. `f`(리소스 검색)가 생기고 나니 상시 표시되는 트리 패널이 중복 기능이 됨.
+- VCN을 고르면(`i` 또는 `Enter`) 예전엔 사이드바로 포커스가 넘어갔는데, 이제 곧바로 리소스 검색창(`f`)이 뜬다 — `selectVcnFilter`가 `openResourceSearch()`를 직접 호출.
+- "Compartments"를 검색창에서 고르면 테넌시 루트로 리셋하는 동작(`switchToRootCompartments`)은 예전에 사이드바 전용이었는데, 이제 `pickerResource` 처리 쪽으로 옮겨서 그대로 유지됨 — 안 옮겼으면 리프 컴파트먼트에 있을 때 빈 화면만 반복되는 회귀가 났을 것.
+
+### OCI 그린 팔레트로 리테마
+
+- OCI 콘솔 사이드바를 캡처한 스크린샷에서 실제 픽셀 색상을 추출(비중순 7색) → 6색을 골라 `internal/app/model.go`의 `ociAccent`/`ociBorder`/`ociMuted`/`ociSubtle`/`ociSelBg`/`ociHighlt` 상수로 도입. 자세한 매핑은 `docs/COLOR_SYSTEM.md` 참고.
+- 성공/에러/RUNNING/STOPPED 배지 같은 "의미 신호" 색은 그대로 뒀다 — 빨강을 초록으로 바꾸면 의미가 헷갈림.
+- 스플래시 화면은 전용 스타일(`splashLogoStyle`/`splashMutedStyle`/`splashProfileStyle`)로 분리해서 메인 UI 팔레트 변경에 영향받지 않게 함. 우측 상단 코너 워드마크도 `splashLogoStyle`(레드) 그대로.
+- `Profile:`/`Region:`/`Resource:`/`Compartment:` 값과 코너 버전 문구만 `headerValueStyle`(흰색)로 분리 — 나머지 `titleStyle` 사용처(테이블 헤더 등)는 그대로 액센트 그린 유지.
+- 테이블 데이터 셀 텍스트도 흰색으로 — `state_color.go`의 `whitenDataRows`. 처음엔 `table.Styles.Cell`에 직접 `Foreground`를 줬는데, **선택 행 배경이 첫 컬럼 이후로 끊기는** 버그가 나서(실제 tty로 pty+pyte 띄워서 픽셀 단위로 확인) 되돌리고, 행 전체를 한 번에 감싸는 방식 + `colorizeInstanceState`보다 먼저 실행하는 순서로 다시 구현.
+
+### 버그 수정
+
+- **스페이스바 도움말 토글**: 팝업이 열린 상태에서 스페이스바를 다시 누르면, "아무 키나 누르면 닫힘" 처리가 먼저 닫은 걸 스페이스바 자체의 토글 로직이 곧바로 다시 열어버려서 사실상 안 닫히던 버그. `wasHelpOpen`으로 원래 상태를 기억해두고 판단하도록 수정.
+- **검색창(`f`) 뜰 때 테이블 우측 테두리 소실**: `overlayCenter`가 쓰는 `spliceOverlay`가 코너 전용(도움말 팝업, 코너 로고)으로 설계돼서, 박스 뒤에 남는 원래 내용을 버리고 있었다 — 코너 오버레이는 어차피 끝까지 덮으니 안 보였는데, 폭이 좁은 센터 오버레이(리소스 검색창)는 박스 뒤에 실제 콘텐츠(테이블 우측 테두리 등)가 남아있어서 문제가 드러남. `embedInLine`과 같은 left+box+right 3분할 스플라이스로 통일해서 해결.
+
+### 기타
+
+- 우측 상단에 작은 3행 블록 폰트 로고(`cornerLogoArt`) + 그 아래 릴리즈 버전(또는 `dev` 빌드면 "OCI TUI") 문구 추가. `cmd/toci/main.go`의 기존 `version`(ldflags 주입) 변수를 `app.New()`까지 연결.
+- 스플래시 진행 바: 폭 확장, 10%→30%→60% 중 처음 두 단계를 빠르게, taws(github.com/huseyinbabal/taws) 스타일 브레일 스피너 + 랜덤 문구(단계 바뀔 때마다 재추첨), 세로 위치를 화면 위쪽으로 이동.
+- `Profile:`/`Region:`/`Resource:` 아래 `Compartment:` 값도 별도 줄로 명시적 표시.
+
 ## v0.1.2
 
 ### 리소스 검색 (`f`) 및 사이드바 트리 접근 변경

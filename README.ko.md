@@ -1,18 +1,24 @@
 <p align="center">
-  <img src="assets/logo.png" alt="toci logo" width="480">
+  <img src="assets/toci-logo.png" alt="toci logo" width="400">
 </p>
 
 # toci - Terminal UI for OCI
 
 터미널을 벗어나지 않고 Oracle Cloud Infrastructure(OCI)의 컴파트먼트, 컴퓨트, 네트워크, 데이터베이스 리소스를 빠르게 탐색/관리할 수 있는 키보드 중심 터미널 UI입니다.
 
+---
+
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](https://go.dev/)
 [English](README.md)
+
+---
 
 기본값은 **읽기 전용**입니다. 쓰기 액션(인스턴스 start/stop, Bastion SSH 세션)은 명시적인 `--write` 플래그와, 리소스 이름을 직접 타이핑해야 하는 확인 절차 뒤에만 동작합니다.
 
 ## 기능
 
-- **사이드바 리소스 트리** — Compartments(현재 드릴다운 경로 포함), VCN-scoped 리소스, Global-scoped 리소스가 왼쪽에 항상 표시됩니다.
+- **리소스 검색** — `f`를 누르면 화면 중앙에 모든 리소스 종류를 퍼지 검색하는 창이 뜨고, 바로 진입할 수 있습니다.
 - **컴파트먼트 탐색** — 지연(lazy) drill-down 방식 (`Enter`로 진입, `Esc`로 상위 복귀), 테넌시 전체 `inspect` 권한이 없어도 동작합니다.
 - **VCN 스코프 필터링** — VCN을 하나 고르면 그 VCN에 속한 모든 리소스(Subnet, Route Table, Security List, NSG, Instance, Load Balancer, DB System, Autonomous DB, Exadata VM Cluster)가 자동으로 그 VCN 기준으로 필터링됩니다.
 - **리소스 12종**: Compartments, Instances, VCNs, Subnets, Route Tables, Security Lists, NSGs, DRGs, Load Balancers, DB Systems, Autonomous Databases, Exadata VM Clusters.
@@ -84,17 +90,16 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 | 키 | 동작 |
 | --- | --- |
 | `j` / `k` (또는 방향키) | 위/아래 이동 |
-| `Enter` | Compartment: 하위 진입 · VCN: 이 VCN 기준으로 필터링 (`i`와 동일) · 그 외: 동작 없음 |
+| `Enter` | Compartment: 하위 진입 · VCN: 이 VCN 기준으로 필터링, `i`와 동일, 바로 리소스 검색창이 뜸 · 그 외: 동작 없음 |
 | `d` | 선택한 행의 상세(YAML) 보기 — 모든 리소스 종류 |
 | `Esc` | 상세 닫기 → 필터 해제 → VCN 필터 해제 → 상위 컴파트먼트로 (해당되는 첫 번째 동작 실행) |
 | `Tab` | 다음 리소스 종류로 순환 전환 |
 | `f` / `:` | 중앙 검색창에서 리소스 종류를 검색해서 진입 |
-| `t` | 사이드바 트리를 켜면서 바로 포커스 이동(vim 폴더트리처럼) — 다시 누르면 숨김 |
 | `/` | 현재 목록을 이름으로 필터링 |
 | `r` | 리전 전환 (구독된 리전만) |
 | `R` | 현재 목록 새로고침 |
 | `e` | 현재 화면을 CSV로 export (UTF-8 BOM 포함) |
-| `i` | *(VCN 행에서)* 모든 VCN-scoped 리소스를 이 VCN 기준으로 필터링 (`Enter`와 동일) |
+| `i` | *(VCN 행에서)* 모든 VCN-scoped 리소스를 이 VCN 기준으로 필터링, `Enter`와 동일, 바로 리소스 검색창이 뜸 |
 | `v` | *(Security List 행에서)* ingress/egress 규칙을 표로 보기 |
 | `m` | *(VCN 필터가 걸려있을 때)* 그 VCN의 구성도를 Mermaid로 export |
 | `a` | *(Instance, `--write` 필요)* 액션 메뉴 — start/stop, 타이핑 확인 필요 |

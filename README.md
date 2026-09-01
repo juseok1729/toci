@@ -1,18 +1,24 @@
 <p align="center">
-  <img src="assets/logo.png" alt="toci logo" width="480">
+  <img src="assets/toci-logo.png" alt="toci logo" width="400">
 </p>
 
 # toci - Terminal UI for OCI
 
 A fast, keyboard-driven terminal UI for browsing and managing Oracle Cloud Infrastructure (OCI) — compartments, compute, networking, and database resources — without leaving your terminal.
 
+---
+
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](https://go.dev/)
 [한국어](README.ko.md)
+
+---
 
 Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) are gated behind an explicit `--write` flag and a type-the-resource-name confirmation.
 
 ## Features
 
-- **Sidebar resource tree** — Compartments (with the live drill-down path), VCN-scoped resources, and Global-scoped resources, always visible on the left.
+- **Resource search** — press `f` for a centered fuzzy picker over every resource kind, jump straight to one.
 - **Compartment navigation** — lazy drill-down (`Enter` to descend, `Esc` to go up), no tenancy-wide `inspect` permission required.
 - **VCN-scoped filtering** — pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
 - **12 resource kinds**: Compartments, Instances, VCNs, Subnets, Route Tables, Security Lists, NSGs, DRGs, Load Balancers, DB Systems, Autonomous Databases, Exadata VM Clusters.
@@ -84,17 +90,16 @@ On startup you'll land on the tenancy root's Compartments list. Drill down with 
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrow keys) | Move up/down |
-| `Enter` | Compartment: descend · VCN: filter all VCN-scoped resources to it (same as `i`) · everything else: no-op |
+| `Enter` | Compartment: descend · VCN: filter all VCN-scoped resources to it, same as `i`, then opens the resource search to pick one · everything else: no-op |
 | `d` | View detail (YAML) for the selected row, any resource kind |
 | `Esc` | Close detail → clear filter → back out of a VCN filter → go up a compartment (whichever applies first) |
 | `Tab` | Cycle to the next resource kind |
 | `f` / `:` | Search resource kinds in a centered picker and jump to one |
-| `t` | Show the sidebar tree and focus it (vim-tree style) — press again to hide |
 | `/` | Filter the current list by name |
 | `r` | Switch region (subscribed regions only) |
 | `R` | Refresh the current list |
 | `e` | Export the current view to CSV (UTF-8 BOM) |
-| `i` | *(on a VCN row)* Filter all VCN-scoped resources to this VCN (same as `Enter`) |
+| `i` | *(on a VCN row)* Filter all VCN-scoped resources to this VCN, same as `Enter`, then opens the resource search to pick one |
 | `v` | *(on a Security List row)* View ingress/egress rules as a table |
 | `m` | *(with a VCN filter active)* Export a Mermaid diagram of the VCN's topology |
 | `a` | *(Instance, `--write` only)* Action menu — start/stop, with a type-to-confirm prompt |

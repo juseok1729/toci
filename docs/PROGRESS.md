@@ -165,13 +165,12 @@ internal/registry/
   registry.go                 All() — UI에 노출되는 리소스 순서
 internal/app/
   model.go                    bubbletea Model — 상태머신 본체 (Update/View)
-  sidebar.go                  왼쪽 사이드바 리소스 트리(Compartments/VCN-scoped/Global-scoped) + 컴파트먼트 경로 표시
   state_color.go              Instance STATE 배경색 후처리 (ansi.Cut 기반, 렌더 후 색칠)
   help.go                     스페이스바 which-key 팝업 (우측하단 오버레이)
   export.go                   CSV export 공통 로직 (UTF-8 BOM)
   diagram.go                  VCN 서브넷별 Mermaid 다이어그램 export
   security_rules.go           Security List ingress/egress 규칙 테이블 뷰 (`v`) + export
-  picker.go                   피커 오버레이 (region/action/bastion 공용, resource 피커는 제거됨)
+  picker.go                   피커 오버레이 (region/action/bastion/resource 공용 — `f`/`:`가 resource 피커를 연다)
   compartment.go              breadcrumb, 루트 이름 조회, 리전 목록 조회
   bastion.go                  Bastion 세션 생성/폴링, SSH 명령 조립 (미검증 — 위 참고)
   paginate.go                 OpcNextPage 전체 순회 헬퍼
