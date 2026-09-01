@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/toci-logo.png" alt="toci logo" width="400">
+  <img src="assets/toci-logo-red.png" alt="toci logo" width="400">
 </p>
 
 # toci - Terminal UI for OCI
