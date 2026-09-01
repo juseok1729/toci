@@ -88,9 +88,8 @@ On startup you'll land on the tenancy root's Compartments list. Drill down with 
 | `d` | View detail (YAML) for the selected row, any resource kind |
 | `Esc` | Close detail → clear filter → back out of a VCN filter → go up a compartment (whichever applies first) |
 | `Tab` | Cycle to the next resource kind |
-| `f` | Search resource kinds in a centered picker and jump to one |
-| `t` | Show/hide the sidebar tree |
-| `:` | *(sidebar visible only)* Focus the sidebar tree, vim-tree style |
+| `f` / `:` | Search resource kinds in a centered picker and jump to one |
+| `t` | Show the sidebar tree and focus it (vim-tree style) — press again to hide |
 | `/` | Filter the current list by name |
 | `r` | Switch region (subscribed regions only) |
 | `R` | Refresh the current list |

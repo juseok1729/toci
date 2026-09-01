@@ -972,19 +972,21 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
-	case ":":
-		if m.sidebarHidden {
-			return m, nil
-		}
-		m.openSidebar()
-		return m, nil
-
 	case "t":
 		m.sidebarHidden = !m.sidebarHidden
+		if m.sidebarHidden {
+			// Hiding the tree while focused on it leaves nothing to be
+			// focused on — kick back to the table.
+			if m.mode == modeSidebar {
+				m.mode = modeTable
+			}
+		} else {
+			m.openSidebar()
+		}
 		m.relayout()
 		return m, nil
 
-	case "f":
+	case ":", "f":
 		items := make([]pickerItem, len(m.resources))
 		for i, res := range m.resources {
 			items[i] = pickerItem{key: res.Key(), label: res.Label()}
@@ -1394,7 +1396,7 @@ func (m Model) helpEntries() []helpEntry {
 		add("enter", "descend")
 	}
 	add("d", "detail")
-	add("f", "search resources")
+	add("f / :", "search resources")
 	add("/", "filter")
 	add("r", "region")
 	add("R", "refresh")
@@ -1403,10 +1405,9 @@ func (m Model) helpEntries() []helpEntry {
 		add("m", "export diagram")
 	}
 	if m.sidebarHidden {
-		add("t", "show tree")
+		add("t", "show tree + focus")
 	} else {
 		add("t", "hide tree")
-		add(":", "focus tree")
 	}
 	if _, ok := m.actionable(); ok {
 		if m.writeEnabled {

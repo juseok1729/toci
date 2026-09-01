@@ -245,6 +245,13 @@ func (m Model) updateSidebar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = modeTable
 		return m, nil
+	case "t":
+		// Toggle works from inside the tree too — otherwise hiding it
+		// while focused needs an Esc first, breaking the single-key toggle.
+		m.sidebarHidden = true
+		m.mode = modeTable
+		m.relayout()
+		return m, nil
 	case "up", "k":
 		if m.sidebarCursor > 0 {
 			m.sidebarCursor--
