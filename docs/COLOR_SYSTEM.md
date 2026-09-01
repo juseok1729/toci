@@ -8,12 +8,12 @@ toci는 웹 프로젝트가 아니라 [Bubble Tea](https://github.com/charmbrace
 
 | 상수 | 값 | 용도 |
 | --- | --- | --- |
-| `ociAccent` | `#689878` (가장 많이 나온 세이지, 29%) | 제목/강조 텍스트, 테이블 헤더, 피커·박스 제목 |
+| `ociAccent` | `#689878` (가장 많이 나온 세이지, 29%) | 제목/강조 텍스트, 피커·박스 제목 |
 | `ociBorder` | `#487858` (중간 포레스트) | 모든 테두리 — 박스, 테이블, 도움말 팝업, Security List 테이블 |
 | `ociMuted` | `#588868` | (현재 미사용 — 어두운 상태 그린, 참고용으로 남겨둠) |
 | `ociSubtle` | `#88b898` (가장 밝음) | 상태줄, 라벨 접두어(`Profile:` 등), 도움말 설명 텍스트 |
 | `ociSelBg` | `#386848` (가장 어두움) | 테이블/피커에서 선택된 행의 배경 |
-| `ociHighlt` | `#e8c878` (베이지/골드 포인트) | 도움말 키 라벨 강조 |
+| `ociHighlt` | `#e8c878` (베이지/골드 포인트) | 도움말 키 라벨 강조, 테이블 컬럼 헤더 |
 
 **의도적으로 이 팔레트에 넣지 않은 것**: `successStyle`(`2`, 초록)·`errorStyle`(`196`, 빨강)과 `state_color.go`의 RUNNING/STOPPED 배지는 상태를 의미하는 신호색이라, 그린 테마로 바꾸면 "빨강=중지/에러"라는 신호 자체가 모호해진다. 그대로 뒀다.
 
@@ -21,12 +21,12 @@ toci는 웹 프로젝트가 아니라 [Bubble Tea](https://github.com/charmbrace
 
 | 변수 | 색 | 용도 |
 | --- | --- | --- |
-| `titleStyle` | `ociAccent` + Bold | 테이블 헤더, 피커/박스 제목 등 강조 텍스트 (헤더 값 자체는 아래 `headerValueStyle` 참고) |
+| `titleStyle` | `ociAccent` + Bold | 피커/박스 제목 등 강조 텍스트 (헤더 값 자체는 아래 `headerValueStyle` 참고, 테이블 컬럼 헤더는 `newTable`에서 `ociHighlt`로 직접 지정) |
 | `pathStyle` | `ociSubtle` | 라벨 접두어, 보조 텍스트 |
 | `statusStyle` | `ociSubtle` | 상태줄, 필터 힌트, 로딩 텍스트 — 좀 더 밝은 녹색을 원해서 `ociMuted`에서 옮김 |
 | `boxStyle` | 테두리 `ociBorder` | 확인/프롬프트 박스 |
 | `selStyle` | fg `255`(흰색) / bg `ociSelBg` + Bold | 테이블·피커에서 커서가 위치한 선택 행 |
-| `headerValueStyle` | `255`(흰색) + Bold | `Profile:`/`Region:`/`Resource:`/`Compartment:` 값과 코너 버전 문구 전용 — `titleStyle`과 분리해서, 이 값들만 흰색으로 바꿔도 테이블 헤더 등 다른 곳은 그대로 `ociAccent`를 유지한다 |
+| `headerValueStyle` | `255`(흰색) + Bold | `Profile:`/`Region:`/`Resource:`/`Compartment:` 값과 코너 버전 문구 전용 — `titleStyle`과 분리해서, 이 값들만 흰색으로 바꿔도 다른 곳은 그대로 `ociAccent`를 유지한다 |
 | `successStyle` | `2`(초록) | 성공 메시지 (의미색, 팔레트 예외) |
 | `errorStyle` | `196`(빨강) + Bold | 에러 메시지 (의미색, 팔레트 예외) |
 

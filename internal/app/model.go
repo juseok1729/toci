@@ -50,8 +50,8 @@ var (
 
 	// headerValueStyle is titleStyle's white counterpart, scoped to just the
 	// Profile/Region/Resource/Compartment values and the corner version
-	// line — titleStyle itself stays ociAccent everywhere else (table
-	// headers, picker/box titles), so this only touches what was asked.
+	// line — titleStyle itself stays ociAccent everywhere else (picker/box
+	// titles), so this only touches what was asked.
 	headerValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
 )
 
@@ -308,7 +308,7 @@ func newTable(height int) table.Model {
 		table.WithHeight(height),
 	)
 	s := table.DefaultStyles()
-	s.Header = s.Header.Bold(true).Foreground(lipgloss.Color(ociAccent))
+	s.Header = s.Header.Bold(true).Foreground(lipgloss.Color(ociHighlt))
 	s.Selected = selStyle
 	t.SetStyles(s)
 	return t
