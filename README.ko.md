@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/toci-logo.png" alt="toci logo" width="480">
+  <img src="assets/logo.png" alt="toci logo" width="480">
 </p>
 
 # toci
