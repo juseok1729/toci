@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="toci logo" width="480">
 </p>
 
-# toci
+# toci - Terminal UI for OCI
 
 터미널을 벗어나지 않고 Oracle Cloud Infrastructure(OCI)의 컴파트먼트, 컴퓨트, 네트워크, 데이터베이스 리소스를 빠르게 탐색/관리할 수 있는 키보드 중심 터미널 UI입니다.
 
