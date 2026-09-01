@@ -108,7 +108,7 @@ func securityRuleRecords(sl core.SecurityList) [][]string {
 func renderSecurityRules(name string, records [][]string) string {
 	t := ltable.New().
 		Border(lipgloss.NormalBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("240"))).
+		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color(ociBorder))).
 		Headers(securityRuleHeaders...).
 		Rows(records...)
 

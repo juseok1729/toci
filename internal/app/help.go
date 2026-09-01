@@ -14,8 +14,8 @@ type helpEntry struct {
 }
 
 var (
-	helpKeyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	helpDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	helpKeyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociHighlt)).Bold(true)
+	helpDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
 )
 
 // renderHelpBox builds the LazyVim-style which-key popup — every
@@ -44,7 +44,7 @@ func renderHelpBox(m Model) string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		BorderForeground(lipgloss.Color(ociBorder)).
 		Padding(0, 1).
 		Render(b.String())
 }
@@ -59,6 +59,22 @@ func overlayBottomRight(base, box string, termWidth int) string {
 	boxWidth, boxLines := overlayBoxDims(box)
 	baseLines := strings.Split(base, "\n")
 	return spliceOverlay(baseLines, boxLines, termWidth-boxWidth, len(baseLines)-len(boxLines))
+}
+
+// overlayRightAt splices box right-aligned to termWidth, starting at a
+// given row — same splicing as overlayBottomRight, just at an arbitrary
+// row instead of pinned to the last one. Used to stack the corner wordmark
+// and its version/subtitle line at specific rows of the header.
+func overlayRightAt(base, box string, termWidth, row int) string {
+	boxWidth, boxLines := overlayBoxDims(box)
+	baseLines := strings.Split(base, "\n")
+	return spliceOverlay(baseLines, boxLines, termWidth-boxWidth, row)
+}
+
+// overlayTopRight splices box onto the top-right corner (row 0). Used for
+// the small "toci" wordmark in the corner of the main screen.
+func overlayTopRight(base, box string, termWidth int) string {
+	return overlayRightAt(base, box, termWidth, 0)
 }
 
 // overlayCenter splices box onto an already-rendered view, centered
@@ -109,7 +125,21 @@ func spliceOverlay(baseLines, boxLines []string, x, y int) string {
 			continue
 		}
 		left := ansi.Cut(baseLines[row], 0, x)
-		baseLines[row] = left + boxLine
+		// Cut can't manufacture columns that aren't there — a base line
+		// shorter than x (e.g. the short "Profile: ..." header line under
+		// cornerLogo) comes back as-is, which would land the box right
+		// after the short text instead of at column x. Pad it out first.
+		if w := ansi.StringWidth(left); w < x {
+			left += strings.Repeat(" ", x-w)
+		}
+		// Keep whatever was past the box's own right edge too — for a
+		// corner overlay (help box, cornerLogo) the box already reaches
+		// the true edge so this is empty and a no-op, but a narrower,
+		// centered box (the "f" resource search) would otherwise wipe out
+		// real content to its right, like a table box's own border, on
+		// every row it overlaps.
+		right := ansi.Cut(baseLines[row], x+ansi.StringWidth(boxLine), 1<<20)
+		baseLines[row] = left + boxLine + right
 	}
 	return strings.Join(baseLines, "\n")
 }

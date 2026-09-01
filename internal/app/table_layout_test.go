@@ -71,9 +71,9 @@ func TestFitColumnsShrinksProportionallyWhenTooWide(t *testing.T) {
 }
 
 func TestRelayoutPreservesCursorAndResizesColumns(t *testing.T) {
-	m := New(nil, registry.Scope{Region: "ap-chuncheon-1"}, false, "demo")
+	m := New(nil, registry.Scope{Region: "ap-chuncheon-1"}, false, "demo", "dev")
 	m.mode = modeTable
-	m.width, m.height = 120, 24
+	m.width, m.height = 90, 24
 	m.relayout()
 
 	mk := func(n string) registry.Row {
@@ -83,16 +83,16 @@ func TestRelayoutPreservesCursorAndResizesColumns(t *testing.T) {
 	m.setDisplayRows()
 	m.table.SetCursor(2)
 
-	widthWithSidebar := m.mainContentWidth()
-	m.sidebarHidden = true
+	widthNarrow := m.mainContentWidth()
+	m.width = 150
 	m.relayout()
-	widthHidden := m.mainContentWidth()
+	widthWide := m.mainContentWidth()
 
-	if widthHidden <= widthWithSidebar {
-		t.Fatalf("mainContentWidth hidden=%d, visible=%d — hiding the sidebar should free up width", widthHidden, widthWithSidebar)
+	if widthWide <= widthNarrow {
+		t.Fatalf("mainContentWidth wide=%d, narrow=%d — a wider terminal should free up width", widthWide, widthNarrow)
 	}
-	if m.table.Width() != widthHidden-tableBoxOverhead {
-		t.Errorf("table.Width() = %d after hiding the sidebar, want %d (mainContentWidth minus the box border)", m.table.Width(), widthHidden-tableBoxOverhead)
+	if m.table.Width() != widthWide-tableBoxOverhead {
+		t.Errorf("table.Width() = %d after resizing, want %d (mainContentWidth minus the box border)", m.table.Width(), widthWide-tableBoxOverhead)
 	}
 	if got := m.table.Cursor(); got != 2 {
 		t.Errorf("table cursor = %d after relayout, want 2 (relayout must not reset the selection)", got)

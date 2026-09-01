@@ -22,14 +22,37 @@ import (
 	"toci/internal/registry"
 )
 
+// The accent/chrome palette below is sampled straight from a screenshot of
+// the OCI console's own sidebar (a thin decorative strip, not a flat brand
+// color) — 7 swatches ranked by pixel share; see docs/COLOR_SYSTEM.md.
+// Semantic colors (success/error/state badges in state_color.go) are left
+// out on purpose: those signal meaning (red = stopped/error), and
+// retheming them to green would make that signal ambiguous. splash.go has
+// its own copies of the old statusStyle/pathStyle values (splashMutedStyle/
+// splashProfileStyle) so the splash screen's look doesn't move with this.
+const (
+	ociAccent = "#689878" // dominant sage, 29% of the sampled strip
+	ociBorder = "#487858" // mid forest — structural chrome (borders)
+	ociMuted  = "#588868" // status/track text
+	ociSubtle = "#88b898" // lightest — secondary/breadcrumb text
+	ociSelBg  = "#386848" // dark forest — selected-row background
+	ociHighlt = "#e8c878" // the beige/gold accent blob in the strip
+)
+
 var (
-	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociMuted))
 	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
-	pathStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	boxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
-	selStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("39")).Bold(true)
+	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ociAccent)).Bold(true)
+	pathStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
+	boxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(ociBorder)).Padding(0, 1)
+	selStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color(ociSelBg)).Bold(true)
+
+	// headerValueStyle is titleStyle's white counterpart, scoped to just the
+	// Profile/Region/Resource/Compartment values and the corner version
+	// line — titleStyle itself stays ociAccent everywhere else (table
+	// headers, picker/box titles), so this only touches what was asked.
+	headerValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
 )
 
 type mode int
@@ -41,7 +64,6 @@ const (
 	modeFilter
 	modeConfirm
 	modePrompt
-	modeSidebar
 	modeSplash
 )
 
@@ -77,6 +99,7 @@ type sshDoneMsg struct{ err error }
 type Model struct {
 	factory   *clients.Factory
 	profile   string
+	version   string
 	resources []registry.Resource
 	resIdx    int
 	scope     registry.Scope
@@ -102,17 +125,16 @@ type Model struct {
 	sshBastionID string
 	promptInput  textinput.Model
 
-	mode          mode
-	sidebarCursor int
-	loading       bool
-	err           error
-	statusMsg     string
+	mode      mode
+	loading   bool
+	err       error
+	statusMsg string
 
 	// autoRedirect is set right before a load that's allowed to jump away
 	// to VCNs if it comes back empty — descending into a compartment,
-	// basically. A manual switch back to Compartments (sidebar/Tab) must
-	// NOT set this, or an already-empty compartment bounces straight back
-	// to VCNs and the user can never re-pick a sibling compartment.
+	// basically. A manual switch back to Compartments (Tab) must NOT set
+	// this, or an already-empty compartment bounces straight back to VCNs
+	// and the user can never re-pick a sibling compartment.
 	autoRedirect bool
 
 	// vcnFilterName is non-empty while the Instance table is scoped to one
@@ -132,8 +154,6 @@ type Model struct {
 	// render time, not something the Update dispatch branches on.
 	showHelp bool
 
-	sidebarHidden bool
-
 	// splashProgress/splashFrame drive the startup splash screen's fake
 	// progress bar and spinner — "fake" because the only real signal is a
 	// single List call finishing; a bar that jumps through a couple of
@@ -147,10 +167,14 @@ type Model struct {
 	splashFrame     int
 	splashDataReady bool
 
-	// splashPhrase is one splashPhrases entry, picked once per run (New)
-	// rather than per-tick — a stable joke reads as intentional, one that
-	// changes every 60ms just reads as flickering.
-	splashPhrase string
+	// splashPhrase is a splashPhrases entry, re-rolled each time
+	// splashProgress advances to a new stage rather than per-tick — a
+	// phrase that changes every 60ms just reads as flickering.
+	// splashSpinnerFrame advances in lockstep with it (see splashTickMsg),
+	// matching taws's SplashState::set_message, which bumps its spinner
+	// frame only when the status message changes.
+	splashPhrase       string
+	splashSpinnerFrame int
 
 	width, height int
 
@@ -166,7 +190,7 @@ type Model struct {
 	tableHeight int
 }
 
-func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, profile string) Model {
+func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, profile, version string) Model {
 	fi := textinput.New()
 	fi.Placeholder = "filter..."
 
@@ -179,6 +203,7 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 	return Model{
 		factory:      factory,
 		profile:      profile,
+		version:      version,
 		resources:    registry.All(factory),
 		scope:        scope,
 		compPath:     []crumb{{ID: scope.CompartmentID, Name: "root"}},
@@ -283,7 +308,7 @@ func newTable(height int) table.Model {
 		table.WithHeight(height),
 	)
 	s := table.DefaultStyles()
-	s.Header = s.Header.Bold(true).Foreground(lipgloss.Color("39"))
+	s.Header = s.Header.Bold(true).Foreground(lipgloss.Color(ociAccent))
 	s.Selected = selStyle
 	t.SetStyles(s)
 	return t
@@ -417,13 +442,7 @@ func (m *Model) setDisplayRows() {
 	m.refreshTable(m.displayRows)
 }
 
-// mainAbsFloor is the main panel's true minimum, distinct from mainMinWidth
-// (sidebar.go) — that constant is only the *preferred* reservation used
-// when deciding how far to shrink the sidebar. Flooring here at that same
-// preferred value too would let the two sides' floors add up to more than
-// a narrow terminal actually has (sidebarContentWidth already gives up on
-// the full reservation and shrinks itself once the terminal's that tight —
-// see sidebarAbsFloor).
+// mainAbsFloor is the main panel's true minimum width.
 const mainAbsFloor = 10
 
 // tableBoxOverhead is the two border columns plus the two 1-space padding
@@ -438,24 +457,18 @@ const mainAbsFloor = 10
 const tableBoxOverhead = 4
 
 // mainContentWidth is how many columns the main panel (table/detail/status
-// line) has to work with, to the right of the sidebar.
+// line) has to work with — the terminal width minus a blank margin on each
+// side (see View()) so the table box isn't flush against either edge.
 func (m Model) mainContentWidth() int {
-	w := m.width - sidebarTotalWidth(m)
-	w -= 2 // gutter before main content in View() — sidebar box, or blank margin when hidden
-	if m.sidebarHidden {
-		w -= 2 // matching blank margin after main content, so both sides are equal once there's no sidebar box to fill that role
-	}
+	w := m.width - 4
 	if w < mainAbsFloor {
 		w = mainAbsFloor
 	}
 	return w
 }
 
-// relayout recomputes the table/detail width against the sidebar's current
-// on-screen width. Needed on every window resize, and also whenever the
-// sidebar's own content width could have changed — a compartment path
-// growing/shrinking, or the sidebar being toggled — since none of those are
-// resize events.
+// relayout recomputes the table/detail width against the terminal's current
+// on-screen width. Needed on every window resize.
 func (m *Model) relayout() {
 	mainWidth := m.mainContentWidth()
 	tableWidth := mainWidth - tableBoxOverhead
@@ -471,8 +484,8 @@ func (m *Model) relayout() {
 // (already updated) width, in place. Unlike refreshTable, this calls
 // table.Model.SetColumns directly instead of rebuilding via newTable, so it
 // doesn't reset the cursor/scroll position — a pure width change (resizing
-// the terminal, toggling the sidebar) shouldn't jump the selection back to
-// the top row the way a real row-set change (filter, reload) should.
+// the terminal) shouldn't jump the selection back to the top row the way a
+// real row-set change (filter, reload) should.
 func (m *Model) relayoutTableColumns() {
 	cols := m.current().Columns()
 	colValues := make([][]string, len(cols))
@@ -489,6 +502,23 @@ func (m *Model) relayoutTableColumns() {
 	m.table.SetColumns(tcols)
 }
 
+// vcnScopedResourceKeys are the resource kinds that live "inside" a VCN —
+// either natively filterable by VcnId, or joined against one client-side
+// (see registry.Scope.VcnID and instance_vcn_filter.go). Picking a VCN row
+// ("i" or Enter) scopes every resource in this set until a
+// non-VCN-scoped one is picked; isVcnDependent is the single source of
+// truth other code checks against.
+var vcnScopedResourceKeys = map[string]bool{
+	"vcn": true, "subnet": true, "route-table": true, "security-list": true,
+	"nsg": true, "instance": true, "lb": true, "db-system": true, "adb": true, "exadata": true,
+}
+
+// isVcnDependent reports whether switching to this resource should keep an
+// active VCN filter (scope.VcnID) instead of clearing it.
+func isVcnDependent(key string) bool {
+	return vcnScopedResourceKeys[key]
+}
+
 func (m *Model) switchResource(idx int) tea.Cmd {
 	m.resIdx = idx
 	m.rows = nil
@@ -497,8 +527,8 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 	m.err = nil
 	m.autoRedirect = false
 	// A VCN filter stays active while moving between VCN-scoped resources
-	// (Subnets, Instances, ...) so the sidebar tree can be used to hop
-	// between them without re-picking the VCN. Switching to anything else
+	// (Subnets, Instances, ...), so hopping between them via "f" doesn't
+	// need re-picking the VCN each time. Switching to anything else
 	// (Compartments, DRGs, or back to the VCN list itself) drops it.
 	if !isVcnDependent(m.resources[idx].Key()) {
 		m.scope.VcnID = ""
@@ -509,14 +539,25 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 }
 
 // selectVcnFilter scopes every VCN-dependent resource (see
-// resourceCategories) to one VCN — triggered by "i" on a VCN row — then
-// opens the sidebar so the user can pick which of them to look at. It
-// doesn't switch resource or reload itself: nothing needs fetching until a
-// specific resource is picked from the tree.
+// isVcnDependent) to one VCN — triggered by "i" on a VCN row, or by Enter —
+// then opens the resource search so the user can jump straight to one of
+// them. It doesn't switch resource or reload itself: nothing needs
+// fetching until a specific resource is picked.
 func (m *Model) selectVcnFilter(id, name string) {
 	m.scope.VcnID = id
 	m.vcnFilterName = name
-	m.openSidebar()
+	m.openResourceSearch()
+}
+
+// openResourceSearch opens the "f"/":" centered fuzzy picker over every
+// resource kind.
+func (m *Model) openResourceSearch() {
+	items := make([]pickerItem, len(m.resources))
+	for i, res := range m.resources {
+		items[i] = pickerItem{key: res.Key(), label: res.Label()}
+	}
+	m.picker = newPicker(pickerResource, "Resources", items)
+	m.mode = modePicker
 }
 
 // exitVcn clears the VCN scope and returns to the VCN list.
@@ -536,30 +577,12 @@ func (m *Model) exitVcn() tea.Cmd {
 	return m.switchResource(idx)
 }
 
-// openSidebar switches focus into the sidebar tree, positioned on the
-// currently active resource. Un-hides it first if it was toggled off —
-// there's no point focusing a tree the user can't see.
-func (m *Model) openSidebar() {
-	if m.sidebarHidden {
-		m.sidebarHidden = false
-		m.relayout()
-	}
-	leaves := flatLeaves(buildSidebar(m.resources))
-	for i, l := range leaves {
-		if l.resIdx == m.resIdx {
-			m.sidebarCursor = i
-			break
-		}
-	}
-	m.mode = modeSidebar
-}
-
 // switchToRootCompartments jumps back to the tenancy root and shows its
-// compartment list. Used when the sidebar's Compartments leaf is picked: the
-// current scope is usually already deep inside a leaf compartment (that's
-// how we got redirected to VCNs in the first place), so reloading
-// Compartments at the current scope would just show another empty table.
-// Starting over from the root lets the user drill back down from scratch.
+// compartment list. Used when Compartments is picked via "f": the current
+// scope is usually already deep inside a leaf compartment (that's how we
+// got redirected to VCNs in the first place), so reloading Compartments at
+// the current scope would just show another empty table. Starting over
+// from the root lets the user drill back down from scratch.
 func (m *Model) switchToRootCompartments() tea.Cmd {
 	idx := -1
 	for i, r := range m.resources {
@@ -642,9 +665,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.tableHeight = msg.Height - 8
+		// -9/-7: 4 header lines (Profile/Region/Resource/Compartment) + 1
+		// blank line, plus whatever else each pane reserves below that.
+		m.tableHeight = msg.Height - 9
 		m.table.SetHeight(m.tableHeight)
-		m.detail.Height = msg.Height - 6
+		m.detail.Height = msg.Height - 7
 		m.relayout()
 		return m, nil
 
@@ -659,6 +684,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if target > m.splashProgress {
 			m.splashProgress = target
+			m.splashPhrase = splashPhrases[rand.Intn(len(splashPhrases))]
+			m.splashSpinnerFrame++
 		}
 		if m.splashDataReady && m.splashProgress >= 100 {
 			m.mode = modeTable
@@ -787,8 +814,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirm(msg)
 		case modePrompt:
 			return m.updatePrompt(msg)
-		case modeSidebar:
-			return m.updateSidebar(msg)
 		default:
 			return m.updateTable(msg)
 		}
@@ -867,9 +892,13 @@ func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modePrompt
 		case pickerResource:
 			for i, res := range m.resources {
-				if res.Key() == item.key {
-					return m, m.switchResource(i)
+				if res.Key() != item.key {
+					continue
 				}
+				if res.Key() == "compartment" {
+					return m, m.switchToRootCompartments()
+				}
+				return m, m.switchResource(i)
 			}
 		}
 		return m, nil
@@ -955,6 +984,7 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	wasHelpOpen := m.showHelp
 
 	// Any key closes the shortcuts popup — like LazyVim's which-key,
 	// pressing the actual shortcut both dismisses it and runs the action.
@@ -969,33 +999,19 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case " ":
-		m.showHelp = !m.showHelp
+		// wasHelpOpen, not m.showHelp — the block above already closed it
+		// unconditionally, so re-checking m.showHelp here would always see
+		// false and reopen it every time, making space a no-op toggle.
+		if !wasHelpOpen {
+			m.showHelp = true
+		}
 		return m, nil
 
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
-	case "t":
-		m.sidebarHidden = !m.sidebarHidden
-		if m.sidebarHidden {
-			// Hiding the tree while focused on it leaves nothing to be
-			// focused on — kick back to the table.
-			if m.mode == modeSidebar {
-				m.mode = modeTable
-			}
-		} else {
-			m.openSidebar()
-		}
-		m.relayout()
-		return m, nil
-
 	case ":", "f":
-		items := make([]pickerItem, len(m.resources))
-		for i, res := range m.resources {
-			items[i] = pickerItem{key: res.Key(), label: res.Label()}
-		}
-		m.picker = newPicker(pickerResource, "Resources", items)
-		m.mode = modePicker
+		m.openResourceSearch()
 		return m, nil
 
 	case "r":
@@ -1162,22 +1178,24 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	b.WriteString(pathStyle.Render("Profile:  "))
-	b.WriteString(titleStyle.Render(m.profile))
+	// "  " left margin matches the table box's own left margin below, so
+	// the header block and the box line up on the same left edge instead
+	// of the header sitting flush against the terminal border.
+	b.WriteString(pathStyle.Render("  Profile:  "))
+	b.WriteString(headerValueStyle.Render(m.profile))
 	b.WriteString("\n")
-	b.WriteString(pathStyle.Render("Region:   "))
-	b.WriteString(titleStyle.Render(m.scope.Region))
+	b.WriteString(pathStyle.Render("  Region:   "))
+	b.WriteString(headerValueStyle.Render(m.scope.Region))
 	b.WriteString("\n")
-	b.WriteString(pathStyle.Render("Resource: "))
-	b.WriteString(titleStyle.Render(m.current().Label()))
-	path := breadcrumbLabel(m.compPath)
+	b.WriteString(pathStyle.Render("  Resource: "))
+	b.WriteString(headerValueStyle.Render(m.current().Label()))
+	b.WriteString("\n")
+	compartment := breadcrumbLabel(m.compPath)
 	if m.vcnFilterName != "" {
-		path += " › " + m.vcnFilterName
+		compartment += " › " + m.vcnFilterName
 	}
-	if path != "" {
-		b.WriteString("    ")
-		b.WriteString(pathStyle.Render(path))
-	}
+	b.WriteString(pathStyle.Render("  Compartment: "))
+	b.WriteString(headerValueStyle.Render(compartment))
 	b.WriteString("\n\n")
 
 	// The resource-search picker floats centered over the table instead of
@@ -1220,7 +1238,7 @@ func (m Model) View() string {
 		case m.loading:
 			main.WriteString(statusStyle.Render("loading..."))
 		default:
-			tableView := m.table.View()
+			tableView := whitenDataRows(m.table.View())
 			if m.current().Key() == "instance" {
 				tableView = colorizeInstanceState(tableView, m.table.Columns())
 			}
@@ -1242,18 +1260,15 @@ func (m Model) View() string {
 		}
 	}
 
-	if m.sidebarHidden {
-		// Blank margins on both sides standing in for the sidebar box, so
-		// the table isn't flush against either edge of the terminal — the
-		// left one matches the "  " gutter the visible branch below puts
-		// between the box and main, and the right one mirrors it so the
-		// table box is centered instead of flush against the right edge.
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, "  ", main.String(), "  "))
-	} else {
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, m.renderSidebar(), "  ", main.String()))
-	}
+	// Blank margins on both sides so the table box isn't flush against
+	// either edge of the terminal.
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, "  ", main.String(), "  "))
 
 	out := b.String()
+	// -2: right margin so the logo isn't flush against the terminal edge,
+	// matching the table box's own right margin below.
+	out = overlayTopRight(out, cornerLogo, m.width-2)
+	out = overlayRightAt(out, headerValueStyle.Render(m.cornerSubtitle()), m.width-2, cornerLogoRows+1)
 	if m.mode == modePicker && m.picker.kind == pickerResource {
 		out = overlayCenter(out, m.renderResourceSearch(), m.width, m.height)
 	}
@@ -1261,6 +1276,37 @@ func (m Model) View() string {
 		out = overlayBottomRight(out, renderHelpBox(m), m.width)
 	}
 	return out
+}
+
+// cornerLogoArt is a compact 3-line block-font "TOCI", a scaled-down
+// cousin of splash.go's big ANSI Shadow banner — same idea (a pixel-block
+// wordmark), sized to sit in a corner instead of filling the splash screen.
+const cornerLogoArt = `▄▄▄ ▄▄  ▄▄▄ ▄
+ █  █ █ █   █
+ █  ▀▄▀ ▀▄▄ ▄`
+
+// cornerLogo is cornerLogoArt pinned to the top-right corner of the main
+// screen (splash has its own big banner, so this only shows outside
+// modeSplash — see View()'s early return there).
+var cornerLogo = splashLogoStyle.Render(cornerLogoArt)
+
+// cornerLogoRows is cornerLogoArt's own height — cornerSubtitle lands one
+// row past it (cornerLogoRows+1, a blank line of breathing room rather
+// than sitting flush under the wordmark), landing on the header's blank
+// separator line so it never fights the "Compartment" line right above it
+// for space. Derived from the art itself so resizing it doesn't leave the
+// subtitle floating in the wrong place.
+var cornerLogoRows = strings.Count(cornerLogoArt, "\n") + 1
+
+// cornerSubtitle is the line under the corner wordmark: the release
+// version for a real build (ldflags -X main.version=...), or "OCI TUI" for
+// a "dev" (unversioned/local) build, where a version string would just be
+// noise.
+func (m Model) cornerSubtitle() string {
+	if m.version == "" || m.version == "dev" {
+		return "OCI TUI"
+	}
+	return m.version
 }
 
 func (m Model) renderPicker() string {
@@ -1325,7 +1371,7 @@ func (m Model) renderResourceSearch() string {
 
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("39")). // titleStyle's accent color
+		BorderForeground(lipgloss.Color(ociBorder)).
 		Width(width).
 		Padding(0, 1)
 	lines := strings.Split(style.Render(strings.TrimRight(b.String(), "\n")), "\n")
@@ -1352,7 +1398,7 @@ func (m Model) renderResourceSearch() string {
 func (m Model) renderTableBox(tableView string) string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("39")).
+		BorderForeground(lipgloss.Color(ociBorder)).
 		Padding(0, 1)
 	lines := strings.Split(style.Render(tableView), "\n")
 
@@ -1406,11 +1452,6 @@ func (m Model) helpEntries() []helpEntry {
 	add("e", "export csv")
 	if m.vcnFilterName != "" {
 		add("m", "export diagram")
-	}
-	if m.sidebarHidden {
-		add("t", "show tree + focus")
-	} else {
-		add("t", "hide tree")
 	}
 	if _, ok := m.actionable(); ok {
 		if m.writeEnabled {

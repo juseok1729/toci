@@ -9,15 +9,16 @@ import (
 
 func TestRenderSplash(t *testing.T) {
 	m := Model{
-		profile:        "WYD",
-		mode:           modeSplash,
-		width:          100,
-		height:         30,
-		splashProgress: 42,
-		splashFrame:    3,
-		splashPhrase:   splashPhrases[0],
-		resources:      []registry.Resource{registry.NewSubnetResource(nil)},
-		scope:          registry.Scope{Region: "ap-chuncheon-1"},
+		profile:            "WYD",
+		mode:               modeSplash,
+		width:              100,
+		height:             30,
+		splashProgress:     42,
+		splashFrame:        3,
+		splashSpinnerFrame: 3,
+		splashPhrase:       splashPhrases[0],
+		resources:          []registry.Resource{registry.NewSubnetResource(nil)},
+		scope:              registry.Scope{Region: "ap-chuncheon-1"},
 	}
 
 	out := renderSplash(m)

@@ -35,6 +35,37 @@ var (
 	}()
 )
 
+var whiteTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+
+// whitenDataRows recolors every plain (non-header, non-selected) row of an
+// already-rendered table view to a bright white foreground — bubbles'
+// default Cell style leaves rows uncolored, falling back to the terminal's
+// own (often dimmer) default foreground.
+//
+// This has to run *before* colorizeInstanceState, not after or via
+// table.Styles.Cell directly — setting Cell's own Foreground was tried
+// first and broke the selected row: bubbles renders every cell
+// independently (own open+reset) and only *afterward* wraps the whole row
+// in Selected if it's the cursor row, so a per-cell reset baked in ahead of
+// time cuts that outer wrap's background off after the first cell. Wrapping
+// each full row exactly once here — and skipping the selected line
+// entirely, since selStyle already sets it white — avoids that, and gives
+// colorizeInstanceState's ansi.Cut splice something already "open" to
+// carry forward past the STATE badge on non-selected rows too.
+func whitenDataRows(view string) string {
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			continue // header row — already styled by table.Styles.Header
+		}
+		if selectedLinePrefix != "" && strings.HasPrefix(line, selectedLinePrefix) {
+			continue // already white (and backgrounded) via selStyle
+		}
+		lines[i] = whiteTextStyle.Render(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // colorizeInstanceState highlights RUNNING/STOPPED in the STATE column of an
 // already-rendered Instance table (the string bubbles' table.Model.View()
 // returns).
