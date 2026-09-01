@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os/exec"
 	"strings"
 	"time"
@@ -136,7 +137,7 @@ type Model struct {
 	// splashProgress/splashFrame drive the startup splash screen's fake
 	// progress bar and spinner — "fake" because the only real signal is a
 	// single List call finishing; a bar that jumps through a couple of
-	// stages (see splashStages/splashTicksPerStage in splash.go) reads as
+	// stages (see splashStages/splashStageTicks in splash.go) reads as
 	// alive instead of stalling on an indeterminate wait. splashProgress is
 	// held at the second-to-last stage until splashDataReady (the real load
 	// finished), so on a fast connection the splash still holds for a
@@ -145,6 +146,11 @@ type Model struct {
 	splashProgress  int
 	splashFrame     int
 	splashDataReady bool
+
+	// splashPhrase is one splashPhrases entry, picked once per run (New)
+	// rather than per-tick — a stable joke reads as intentional, one that
+	// changes every 60ms just reads as flickering.
+	splashPhrase string
 
 	width, height int
 
@@ -185,6 +191,7 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 		loading:      true,
 		autoRedirect: true,
 		mode:         modeSplash,
+		splashPhrase: splashPhrases[rand.Intn(len(splashPhrases))],
 	}
 }
 
@@ -646,11 +653,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.splashFrame++
-		idx := m.splashFrame / splashTicksPerStage
-		if idx >= len(splashStages) {
-			idx = len(splashStages) - 1
-		}
-		target := splashStages[idx]
+		target := splashStages[splashStageIndex(m.splashFrame)]
 		if !m.splashDataReady && target >= 100 {
 			target = splashStages[len(splashStages)-2]
 		}

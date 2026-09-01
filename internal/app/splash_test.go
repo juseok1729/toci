@@ -15,15 +15,21 @@ func TestRenderSplash(t *testing.T) {
 		height:         30,
 		splashProgress: 42,
 		splashFrame:    3,
+		splashPhrase:   splashPhrases[0],
 		resources:      []registry.Resource{registry.NewSubnetResource(nil)},
 		scope:          registry.Scope{Region: "ap-chuncheon-1"},
 	}
 
 	out := renderSplash(m)
-	for _, want := range []string{"████████╗", "42%", "WYD", "ap-chuncheon-1"} {
+	for _, want := range []string{"████████╗", "42%", "WYD", splashPhrases[0], spinnerFrames[3%len(spinnerFrames)]} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderSplash output missing %q", want)
 		}
+	}
+
+	m.splashDataReady = true
+	if out := renderSplash(m); !strings.Contains(out, "Ready!") {
+		t.Errorf("renderSplash with splashDataReady missing %q, got %q", "Ready!", out)
 	}
 
 	// Zero width/height happens before the first WindowSizeMsg arrives —
