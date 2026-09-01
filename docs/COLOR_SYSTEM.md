@@ -10,8 +10,8 @@ toci는 웹 프로젝트가 아니라 [Bubble Tea](https://github.com/charmbrace
 | --- | --- | --- |
 | `ociAccent` | `#689878` (가장 많이 나온 세이지, 29%) | 제목/강조 텍스트, 테이블 헤더, 피커·박스 제목 |
 | `ociBorder` | `#487858` (중간 포레스트) | 모든 테두리 — 박스, 테이블, 도움말 팝업, Security List 테이블 |
-| `ociMuted` | `#588868` | 상태줄, 진행 바 빈 트랙 등 보조 상태 텍스트 |
-| `ociSubtle` | `#88b898` (가장 밝음) | 라벨 접두어(`Profile:` 등), 도움말 설명 텍스트 |
+| `ociMuted` | `#588868` | (현재 미사용 — 어두운 상태 그린, 참고용으로 남겨둠) |
+| `ociSubtle` | `#88b898` (가장 밝음) | 상태줄, 라벨 접두어(`Profile:` 등), 도움말 설명 텍스트 |
 | `ociSelBg` | `#386848` (가장 어두움) | 테이블/피커에서 선택된 행의 배경 |
 | `ociHighlt` | `#e8c878` (베이지/골드 포인트) | 도움말 키 라벨 강조 |
 
@@ -23,7 +23,7 @@ toci는 웹 프로젝트가 아니라 [Bubble Tea](https://github.com/charmbrace
 | --- | --- | --- |
 | `titleStyle` | `ociAccent` + Bold | 테이블 헤더, 피커/박스 제목 등 강조 텍스트 (헤더 값 자체는 아래 `headerValueStyle` 참고) |
 | `pathStyle` | `ociSubtle` | 라벨 접두어, 보조 텍스트 |
-| `statusStyle` | `ociMuted` | 상태줄, 필터 힌트, 로딩 텍스트 |
+| `statusStyle` | `ociSubtle` | 상태줄, 필터 힌트, 로딩 텍스트 — 좀 더 밝은 녹색을 원해서 `ociMuted`에서 옮김 |
 | `boxStyle` | 테두리 `ociBorder` | 확인/프롬프트 박스 |
 | `selStyle` | fg `255`(흰색) / bg `ociSelBg` + Bold | 테이블·피커에서 커서가 위치한 선택 행 |
 | `headerValueStyle` | `255`(흰색) + Bold | `Profile:`/`Region:`/`Resource:`/`Compartment:` 값과 코너 버전 문구 전용 — `titleStyle`과 분리해서, 이 값들만 흰색으로 바꿔도 테이블 헤더 등 다른 곳은 그대로 `ociAccent`를 유지한다 |
@@ -39,7 +39,8 @@ toci는 웹 프로젝트가 아니라 [Bubble Tea](https://github.com/charmbrace
 | 요소 | 스타일 | 값 |
 | --- | --- | --- |
 | ASCII 로고, 진행 바 채워진 부분 | `splashLogoStyle` | `196`(OCI 브랜드 레드) + Bold |
-| 서브타이틀 / 프로필 / 빈 트랙 / 로딩 문구 | `splashMutedStyle` / `splashProfileStyle` | `241` / `245` — 메인 UI가 예전에 쓰던 값을 그대로 복사해 고정 |
+| 서브타이틀 / 프로필 / 빈 트랙 | `splashMutedStyle` / `splashProfileStyle` | `241` / `245` — 메인 UI가 예전에 쓰던 값을 그대로 복사해 고정 |
+| 진행 바 아래 상태 문구(스피너 옆, `Ready!` 포함) | `splashPhraseStyle` | `255`(쨍한 흰색) — 위 서브타이틀/프로필보다 눈에 띄게 하려고 따로 뺌 |
 | 스피너 아이콘 | `spinnerStyle` | `220`(노랑) — taws의 스피너 색을 그대로 |
 
 우측 상단 코너 워드마크(`cornerLogo`, `internal/app/model.go`)도 `splashLogoStyle`을 그대로 써서 `196` 레드로 고정되어 있다 — 스플래시 로고와 동일 계열이라는 의도. 그 바로 아래 버전/`OCI TUI` 문구만 `headerValueStyle`(흰색)이라 메인 UI 톤을 따라간다.

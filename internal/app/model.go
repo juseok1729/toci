@@ -33,14 +33,14 @@ import (
 const (
 	ociAccent = "#689878" // dominant sage, 29% of the sampled strip
 	ociBorder = "#487858" // mid forest — structural chrome (borders)
-	ociMuted  = "#588868" // status/track text
-	ociSubtle = "#88b898" // lightest — secondary/breadcrumb text
+	ociMuted  = "#588868" // unused for now — a dimmer status green, kept catalogued
+	ociSubtle = "#88b898" // lightest — status text, secondary/breadcrumb text
 	ociSelBg  = "#386848" // dark forest — selected-row background
 	ociHighlt = "#e8c878" // the beige/gold accent blob in the strip
 )
 
 var (
-	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociMuted))
+	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
 	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ociAccent)).Bold(true)

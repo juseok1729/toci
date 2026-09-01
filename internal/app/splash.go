@@ -30,6 +30,10 @@ var splashLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold
 var (
 	splashMutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	splashProfileStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	// splashPhraseStyle is the bright white for the status line under the
+	// bar (spinner phrase / "Ready!") — deliberately not splashMutedStyle,
+	// so that one line pops against the dimmer subtitle/profile above it.
+	splashPhraseStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 )
 
 // spinnerFrames — same 4-frame Braille spinner taws
@@ -127,14 +131,15 @@ func renderSplash(m Model) string {
 		splashMutedStyle.Render(strings.Repeat("░", barWidth-filled)) +
 		fmt.Sprintf("] %3d%%", m.splashProgress)
 
-	icon, phrase := spinnerStyle.Render(spinnerFrames[m.splashSpinnerFrame%len(spinnerFrames)]), m.splashPhrase
+	icon := spinnerStyle.Render(spinnerFrames[m.splashSpinnerFrame%len(spinnerFrames)])
+	phrase := m.splashPhrase
 	if m.splashDataReady {
-		icon, phrase = "✅", "Ready!"
+		phrase = "Ready!"
 	}
-	status := fmt.Sprintf("%s %s", icon, splashMutedStyle.Render(phrase))
+	status := fmt.Sprintf("%s %s", icon, splashPhraseStyle.Render(phrase))
 
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		logo, "", subtitle, profile, "", bar, "", status,
+		logo, "", subtitle, profile, "", "", bar, "", status,
 	)
 
 	// taws's layout (src/ui/splash.rs, render) sits its content well above
