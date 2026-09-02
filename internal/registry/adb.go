@@ -35,6 +35,9 @@ func (r *AutonomousDatabaseResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return adbName(row.Raw.(database.AutonomousDatabaseSummary))
 		}},
+		{Header: "STATE", Width: 14, Get: func(row Row) string {
+			return stateLabel(row.Raw.(database.AutonomousDatabaseSummary).LifecycleState)
+		}},
 		{Header: "WORKLOAD", Width: 14, Get: func(row Row) string {
 			return string(row.Raw.(database.AutonomousDatabaseSummary).DbWorkload)
 		}},
@@ -55,9 +58,6 @@ func (r *AutonomousDatabaseResource) Columns() []Column {
 				return "-"
 			}
 			return itoa(*tb)
-		}},
-		{Header: "STATE", Width: 14, Get: func(row Row) string {
-			return string(row.Raw.(database.AutonomousDatabaseSummary).LifecycleState)
 		}},
 	}
 }

@@ -33,7 +33,7 @@
 - **컴파트먼트 탐색** — 지연(lazy) drill-down 방식 (`Enter`로 진입, `Esc`로 상위 복귀), 테넌시 전체 `inspect` 권한이 없어도 동작합니다.
 - **VCN 스코프 필터링** — VCN을 하나 고르면 그 VCN에 속한 모든 리소스(Subnet, Route Table, Security List, NSG, Instance, Load Balancer, DB System, Autonomous DB, Exadata VM Cluster)가 자동으로 그 VCN 기준으로 필터링됩니다.
 - **리소스 12종**: Compartments, Instances, VCNs, Subnets, Route Tables, Security Lists, NSGs, DRGs, Load Balancers, DB Systems, Autonomous Databases, Exadata VM Clusters.
-- **Instance 테이블** — 실시간 CPU%/MEM%(OCI Monitoring), OCPU/메모리 스펙, Public/Private IP, AD/FD, RUNNING/STOPPED 상태를 배경색으로 표시.
+- **Instance 테이블** — 실시간 CPU%/MEM%(OCI Monitoring), OCPU/메모리 스펙, Public/Private IP, AD/FD, 색상으로 표시되는 STATE 컬럼(모든 리소스 종류에서 정상/실패/주의 상태를 초록/빨강/노랑 텍스트로 표시 — [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md) 참고).
 - **Security List 규칙 뷰어** — ingress/egress 규칙을 중첩된 YAML 대신 읽기 쉬운 표로 보여줍니다.
 - **CSV export** (UTF-8 BOM 포함, 엑셀에서 한글 안 깨짐) — 현재 화면에 보이는 내용 그대로 저장 (Security List 규칙 표도 export 가능).
 - **Mermaid 다이어그램 export** — VCN의 서브넷별 구성(Instance/DB System/Autonomous DB/Exadata VM Cluster)과 그 VCN에 붙어있는 DRG까지 `graph TD` + 중첩 `subgraph` 문법의 `.mmd` 플로우차트로 생성합니다.

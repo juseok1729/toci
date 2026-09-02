@@ -70,6 +70,9 @@ func (r *InstanceResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(instanceRow).DisplayName)
 		}},
+		{Header: "STATE", Width: 10, Get: func(row Row) string {
+			return stateLabel(row.Raw.(instanceRow).LifecycleState)
+		}},
 		{Header: "PUBLIC IP", Width: 15, Get: func(row Row) string {
 			return ipString(row.Raw.(instanceRow).IPs.Public)
 		}},
@@ -100,9 +103,6 @@ func (r *InstanceResource) Columns() []Column {
 		{Header: "DOMAIN(AD/FD)", Width: 14, Get: func(row Row) string {
 			inst := row.Raw.(instanceRow).Instance
 			return shortAD(deref(inst.AvailabilityDomain)) + "/" + shortFD(deref(inst.FaultDomain))
-		}},
-		{Header: "STATE", Width: 10, Get: func(row Row) string {
-			return string(row.Raw.(instanceRow).LifecycleState)
 		}},
 	}
 }

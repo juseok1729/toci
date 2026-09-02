@@ -23,11 +23,11 @@ func (r *VcnResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(core.Vcn).DisplayName)
 		}},
+		{Header: "STATE", Width: 12, Get: func(row Row) string {
+			return stateLabel(row.Raw.(core.Vcn).LifecycleState)
+		}},
 		{Header: "CIDR", Width: 18, Get: func(row Row) string {
 			return deref(row.Raw.(core.Vcn).CidrBlock)
-		}},
-		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return string(row.Raw.(core.Vcn).LifecycleState)
 		}},
 	}
 }

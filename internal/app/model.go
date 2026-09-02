@@ -469,8 +469,8 @@ const mainAbsFloor = 10
 // columns (left + right of each) renderTableBox adds around the table in
 // View() — reserved off the table's own width so the boxed table doesn't
 // overflow mainContentWidth. The padding matters here specifically: without
-// it the STATE column's colored badge (colorizeInstanceState paints its
-// whole cell, padding included) sat flush against the right border while
+// it the STATE column's colored text (colorizeState paints its whole cell,
+// padding included) sat flush against the right border while
 // the left side still had bubbles' own column padding as a visible gap —
 // this box-level padding gives both sides the same margin regardless of
 // what's colored inside.
@@ -1289,9 +1289,7 @@ func (m Model) View() string {
 			main.WriteString(statusStyle.Render("loading..."))
 		default:
 			tableView := whitenDataRows(m.table.View())
-			if m.current().Key() == "instance" {
-				tableView = colorizeInstanceState(tableView, m.table.Columns())
-			}
+			tableView = colorizeState(tableView, m.table.Columns())
 			if m.blinkEnabled {
 				tableView = blinkRecentRows(tableView, m.table.Columns(), m.recentRowNames(), m.blinkOn)
 			}

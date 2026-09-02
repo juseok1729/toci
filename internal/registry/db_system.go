@@ -25,6 +25,9 @@ func (r *DbSystemResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(database.DbSystemSummary).DisplayName)
 		}},
+		{Header: "STATE", Width: 14, Get: func(row Row) string {
+			return stateLabel(row.Raw.(database.DbSystemSummary).LifecycleState)
+		}},
 		{Header: "SHAPE", Width: 24, Get: func(row Row) string {
 			return deref(row.Raw.(database.DbSystemSummary).Shape)
 		}},
@@ -37,9 +40,6 @@ func (r *DbSystemResource) Columns() []Column {
 				return "-"
 			}
 			return itoa(*cpu)
-		}},
-		{Header: "STATE", Width: 14, Get: func(row Row) string {
-			return string(row.Raw.(database.DbSystemSummary).LifecycleState)
 		}},
 	}
 }

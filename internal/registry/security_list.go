@@ -23,14 +23,14 @@ func (r *SecurityListResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(core.SecurityList).DisplayName)
 		}},
+		{Header: "STATE", Width: 12, Get: func(row Row) string {
+			return stateLabel(row.Raw.(core.SecurityList).LifecycleState)
+		}},
 		{Header: "INGRESS", Width: 8, Get: func(row Row) string {
 			return itoa(len(row.Raw.(core.SecurityList).IngressSecurityRules))
 		}},
 		{Header: "EGRESS", Width: 8, Get: func(row Row) string {
 			return itoa(len(row.Raw.(core.SecurityList).EgressSecurityRules))
-		}},
-		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return string(row.Raw.(core.SecurityList).LifecycleState)
 		}},
 	}
 }

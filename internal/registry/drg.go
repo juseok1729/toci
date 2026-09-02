@@ -24,7 +24,7 @@ func (r *DrgResource) Columns() []Column {
 			return deref(row.Raw.(core.Drg).DisplayName)
 		}},
 		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return string(row.Raw.(core.Drg).LifecycleState)
+			return stateLabel(row.Raw.(core.Drg).LifecycleState)
 		}},
 	}
 }

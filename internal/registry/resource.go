@@ -5,6 +5,7 @@ package registry
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/oracle/oci-go-sdk/v65/common"
@@ -88,4 +89,18 @@ func deref(s *string) string {
 
 func itoa(n int) string {
 	return strconv.Itoa(n)
+}
+
+// stateLabel renders an OCI LifecycleState enum (e.g. "RUNNING",
+// "NEEDS_ATTENTION") for display as "Running", "Needs Attention" — every
+// resource's STATE column uses this instead of the raw all-caps enum value.
+func stateLabel[T ~string](s T) string {
+	words := strings.Split(string(s), "_")
+	for i, w := range words {
+		if w == "" {
+			continue
+		}
+		words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])
+	}
+	return strings.Join(words, " ")
 }

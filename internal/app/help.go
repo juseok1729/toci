@@ -104,7 +104,7 @@ func overlayBoxDims(box string) (width int, lines []string) {
 // embedInLine punches label into an already-rendered line at column x,
 // keeping the line's original content on both sides — used to set a title
 // or a right-aligned count into a box's border line, the same left+mid+right
-// splice colorizeInstanceState uses for a table cell.
+// splice colorizeState uses for a table cell.
 func embedInLine(line, label string, x int) string {
 	w := ansi.StringWidth(label)
 	left := ansi.Cut(line, 0, x)

@@ -35,7 +35,7 @@ func TestFitColumnsGrowsProportionallyToFillSlack(t *testing.T) {
 	}
 
 	// STATE must not have absorbed a lopsided share of the slack (that's
-	// what stretched colorizeInstanceState's badge background across the
+	// what stretched colorizeState's text-cell padding across the
 	// row) — every column should grow by roughly the same ratio.
 	stateNatural := fitColumnWidth("STATE", colValues[2], 10)
 	nameNatural := fitColumnWidth("NAME", colValues[0], 30)

@@ -29,6 +29,9 @@ func (r *CloudVmClusterResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(database.CloudVmClusterSummary).DisplayName)
 		}},
+		{Header: "STATE", Width: 14, Get: func(row Row) string {
+			return stateLabel(row.Raw.(database.CloudVmClusterSummary).LifecycleState)
+		}},
 		{Header: "SHAPE", Width: 20, Get: func(row Row) string {
 			return deref(row.Raw.(database.CloudVmClusterSummary).Shape)
 		}},
@@ -45,9 +48,6 @@ func (r *CloudVmClusterResource) Columns() []Column {
 				return "-"
 			}
 			return fmt.Sprintf("%.1f", *ocpu)
-		}},
-		{Header: "STATE", Width: 14, Get: func(row Row) string {
-			return string(row.Raw.(database.CloudVmClusterSummary).LifecycleState)
 		}},
 	}
 }

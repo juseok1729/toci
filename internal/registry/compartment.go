@@ -25,7 +25,7 @@ func (r *CompartmentResource) Columns() []Column {
 			return deref(row.Raw.(identity.Compartment).Name)
 		}},
 		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return string(row.Raw.(identity.Compartment).LifecycleState)
+			return stateLabel(row.Raw.(identity.Compartment).LifecycleState)
 		}},
 		{Header: "DESCRIPTION", Width: 40, Get: func(row Row) string {
 			return deref(row.Raw.(identity.Compartment).Description)

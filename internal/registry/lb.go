@@ -33,6 +33,9 @@ func (r *LoadBalancerResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(loadbalancer.LoadBalancer).DisplayName)
 		}},
+		{Header: "STATE", Width: 12, Get: func(row Row) string {
+			return stateLabel(row.Raw.(loadbalancer.LoadBalancer).LifecycleState)
+		}},
 		{Header: "SHAPE", Width: 14, Get: func(row Row) string {
 			return deref(row.Raw.(loadbalancer.LoadBalancer).ShapeName)
 		}},
@@ -43,9 +46,6 @@ func (r *LoadBalancerResource) Columns() []Column {
 				ips = append(ips, deref(ip.IpAddress))
 			}
 			return strings.Join(ips, ", ")
-		}},
-		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return string(row.Raw.(loadbalancer.LoadBalancer).LifecycleState)
 		}},
 	}
 }

@@ -23,14 +23,14 @@ func (r *SubnetResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(core.Subnet).DisplayName)
 		}},
+		{Header: "STATE", Width: 12, Get: func(row Row) string {
+			return stateLabel(row.Raw.(core.Subnet).LifecycleState)
+		}},
 		{Header: "CIDR", Width: 18, Get: func(row Row) string {
 			return deref(row.Raw.(core.Subnet).CidrBlock)
 		}},
 		{Header: "AD", Width: 20, Get: func(row Row) string {
 			return deref(row.Raw.(core.Subnet).AvailabilityDomain)
-		}},
-		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return string(row.Raw.(core.Subnet).LifecycleState)
 		}},
 	}
 }

@@ -33,7 +33,7 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 - **Compartment navigation** — lazy drill-down (`Enter` to descend, `Esc` to go up), no tenancy-wide `inspect` permission required.
 - **VCN-scoped filtering** — pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
 - **12 resource kinds**: Compartments, Instances, VCNs, Subnets, Route Tables, Security Lists, NSGs, DRGs, Load Balancers, DB Systems, Autonomous Databases, Exadata VM Clusters.
-- **Instance table** with live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, public/private IP, AD/FD, and a colored RUNNING/STOPPED state badge.
+- **Instance table** with live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, public/private IP, AD/FD, and a colored STATE column (every resource kind gets green/red/yellow text for healthy/failed/needs-attention states — see [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md)).
 - **Security List rule viewer** — ingress/egress rules as a readable table instead of raw nested YAML.
 - **CSV export** (UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including the Security List rules table.
 - **Mermaid diagram export** — generates a `.mmd` flowchart (`graph TD` + nested `subgraph`) of a VCN's subnets, the Instances/DB Systems/Autonomous DBs/Exadata VM Clusters in each, and any DRGs attached to the VCN.
