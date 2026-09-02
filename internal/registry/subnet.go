@@ -56,7 +56,7 @@ func (r *SubnetResource) List(ctx context.Context, s Scope, page string) ([]Row,
 
 	rows := make([]Row, 0, len(resp.Items))
 	for _, sn := range resp.Items {
-		rows = append(rows, Row{ID: deref(sn.Id), Name: deref(sn.DisplayName), Raw: sn})
+		rows = append(rows, Row{ID: deref(sn.Id), Name: deref(sn.DisplayName), TimeCreated: timeOf(sn.TimeCreated), Raw: sn})
 	}
 
 	next := ""

@@ -55,7 +55,7 @@ func (r *CompartmentResource) List(ctx context.Context, s Scope, page string) ([
 
 	rows := make([]Row, 0, len(resp.Items))
 	for _, c := range resp.Items {
-		rows = append(rows, Row{ID: deref(c.Id), Name: deref(c.Name), Raw: c})
+		rows = append(rows, Row{ID: deref(c.Id), Name: deref(c.Name), TimeCreated: timeOf(c.TimeCreated), Raw: c})
 	}
 
 	next := ""

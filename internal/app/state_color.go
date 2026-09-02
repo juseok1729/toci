@@ -37,6 +37,44 @@ var (
 
 var whiteTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 
+// blinkStyle is the alternating highlight for rows created/modified within
+// the last recentChangesWindow — reuses the gold accent so it reads as
+// "look here" without clashing with the STATE badges' red/green.
+var blinkStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color(ociHighlt))
+
+// blinkRecentRows re-colors (whole row) every row whose NAME matches one of
+// recentNames, but only when blinkOn is true — the caller alternates blinkOn
+// on a timer, so a row genuinely blinks between this highlight and its
+// normal appearance rather than getting stuck highlighted.
+//
+// Matching by the rendered NAME column's text is the same technique
+// colorizeInstanceState uses for STATE values: bubbles' viewport/scroll math
+// isn't exported, so there's no way to map a rendered line back to its
+// registry.Row directly, but every row's NAME is right there in the
+// string. Two rows sharing a display name would both blink or neither — an
+// accepted edge case.
+func blinkRecentRows(view string, cols []table.Column, recentNames map[string]bool, blinkOn bool) string {
+	if !blinkOn || len(recentNames) == 0 {
+		return view
+	}
+	start, end, ok := columnRange(cols, "NAME")
+	if !ok {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+		name := strings.TrimSpace(ansi.Strip(ansi.Cut(line, start, end)))
+		if !recentNames[name] {
+			continue
+		}
+		lines[i] = blinkStyle.Render(ansi.Strip(line))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // whitenDataRows recolors every plain (non-header, non-selected) row of an
 // already-rendered table view to a bright white foreground — bubbles'
 // default Cell style leaves rows uncolored, falling back to the terminal's
@@ -87,7 +125,7 @@ func whitenDataRows(view string) string {
 // so the reassembled line keeps that highlight going right through and past
 // the colored badge instead of cutting it off.
 func colorizeInstanceState(view string, cols []table.Column) string {
-	start, end, ok := stateColumnRange(cols)
+	start, end, ok := columnRange(cols, "STATE")
 	if !ok {
 		return view
 	}
@@ -134,11 +172,11 @@ func colorizeInstanceState(view string, cols []table.Column) string {
 // ceiling now (refreshTable shrinks each column to fit its loaded data), so
 // computing offsets from the declared widths pointed past wherever STATE
 // actually landed on screen and silently colored nothing.
-func stateColumnRange(cols []table.Column) (start, end int, ok bool) {
+func columnRange(cols []table.Column, title string) (start, end int, ok bool) {
 	offset := 0
 	for _, c := range cols {
 		span := c.Width + 2
-		if c.Title == "STATE" {
+		if c.Title == title {
 			return offset, offset + span, true
 		}
 		offset += span

@@ -53,7 +53,7 @@ func (r *RouteTableResource) List(ctx context.Context, s Scope, page string) ([]
 
 	rows := make([]Row, 0, len(resp.Items))
 	for _, rt := range resp.Items {
-		rows = append(rows, Row{ID: deref(rt.Id), Name: deref(rt.DisplayName), Raw: rt})
+		rows = append(rows, Row{ID: deref(rt.Id), Name: deref(rt.DisplayName), TimeCreated: timeOf(rt.TimeCreated), Raw: rt})
 	}
 
 	next := ""

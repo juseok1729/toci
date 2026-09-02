@@ -85,7 +85,7 @@ func (r *LoadBalancerResource) List(ctx context.Context, s Scope, page string) (
 		if allowSubnets != nil && !anySubnetIn(lb.SubnetIds, allowSubnets) {
 			continue
 		}
-		rows = append(rows, Row{ID: deref(lb.Id), Name: deref(lb.DisplayName), Raw: lb})
+		rows = append(rows, Row{ID: deref(lb.Id), Name: deref(lb.DisplayName), TimeCreated: timeOf(lb.TimeCreated), Raw: lb})
 	}
 
 	next := ""

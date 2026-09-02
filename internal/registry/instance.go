@@ -149,7 +149,7 @@ func (r *InstanceResource) List(ctx context.Context, s Scope, page string) ([]Ro
 		if allow != nil && !allow[id] {
 			continue
 		}
-		rows = append(rows, Row{ID: id, Name: deref(i.DisplayName), Raw: instanceRow{
+		rows = append(rows, Row{ID: id, Name: deref(i.DisplayName), TimeCreated: timeOf(i.TimeCreated), Raw: instanceRow{
 			Instance: i,
 			Metrics:  metrics[id],
 			IPs:      ips[id],

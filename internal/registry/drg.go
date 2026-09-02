@@ -47,7 +47,7 @@ func (r *DrgResource) List(ctx context.Context, s Scope, page string) ([]Row, st
 
 	rows := make([]Row, 0, len(resp.Items))
 	for _, d := range resp.Items {
-		rows = append(rows, Row{ID: deref(d.Id), Name: deref(d.DisplayName), Raw: d})
+		rows = append(rows, Row{ID: deref(d.Id), Name: deref(d.DisplayName), TimeCreated: timeOf(d.TimeCreated), Raw: d})
 	}
 
 	next := ""

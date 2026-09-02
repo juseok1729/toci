@@ -85,7 +85,7 @@ func (r *CloudVmClusterResource) List(ctx context.Context, s Scope, page string)
 		if allow != nil && !allow[deref(c.SubnetId)] {
 			continue
 		}
-		rows = append(rows, Row{ID: deref(c.Id), Name: deref(c.DisplayName), Raw: c})
+		rows = append(rows, Row{ID: deref(c.Id), Name: deref(c.DisplayName), TimeCreated: timeOf(c.TimeCreated), Raw: c})
 	}
 
 	next := ""

@@ -56,7 +56,7 @@ func (r *SecurityListResource) List(ctx context.Context, s Scope, page string) (
 
 	rows := make([]Row, 0, len(resp.Items))
 	for _, sl := range resp.Items {
-		rows = append(rows, Row{ID: deref(sl.Id), Name: deref(sl.DisplayName), Raw: sl})
+		rows = append(rows, Row{ID: deref(sl.Id), Name: deref(sl.DisplayName), TimeCreated: timeOf(sl.TimeCreated), Raw: sl})
 	}
 
 	next := ""
