@@ -125,7 +125,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 
 	if dbRows, err := fetchAll(ctx, registry.NewDbSystemResource(factory), scope); err == nil {
 		for _, row := range dbRows {
-			if d, ok := row.Raw.(database.DbSystemSummary); ok {
+			if d, ok := row.Raw.(registry.DbSystemRow); ok {
 				add(deref(d.SubnetId), "cylinder", row.Name)
 			}
 		}
@@ -141,7 +141,7 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 
 	if exaRows, err := fetchAll(ctx, registry.NewCloudVmClusterResource(factory), scope); err == nil {
 		for _, row := range exaRows {
-			if c, ok := row.Raw.(database.CloudVmClusterSummary); ok {
+			if c, ok := row.Raw.(registry.CloudVmClusterRow); ok {
 				add(deref(c.SubnetId), "cylinder", row.Name)
 			}
 		}

@@ -110,3 +110,24 @@ func TestFitColumnsExactFitReturnsNatural(t *testing.T) {
 		t.Errorf("widths[0] = %d, want unchanged natural width %d when already an exact fit", widths[0], natural)
 	}
 }
+
+// TestFitColumnWidthCeilingTruncatesPastDeclaredWidth pins down the
+// mechanism behind a real bug: DB System's ROLE column was declared
+// Width: 10 (fine for "Primary"/"Standby"/"RAC"/"-"), but a cross-region
+// Data Guard peer appends "→<region>" (fetchDbSystemRole), producing values
+// up to 25 chars ("Standby→af-johannesburg-1"). fitColumnWidth's ceiling
+// parameter is a hard cap, not a hint — it truncates rather than growing to
+// fit unexpectedly long content, so the declared Width has to cover the
+// true worst case up front.
+func TestFitColumnWidthCeilingTruncatesPastDeclaredWidth(t *testing.T) {
+	longRole := "Standby→af-johannesburg-1" // 25 chars — the real worst case
+	values := []string{"Primary", "RAC", "-", longRole}
+
+	if got := fitColumnWidth("ROLE", values, 10); got != 10 {
+		t.Errorf("fitColumnWidth with too-small ceiling 10 = %d, want capped at 10 (demonstrates the truncation bug)", got)
+	}
+	wantWidth := len([]rune(longRole)) // fitColumnWidth counts runes, not bytes — "→" is multi-byte
+	if got := fitColumnWidth("ROLE", values, 25); got != wantWidth {
+		t.Errorf("fitColumnWidth with ceiling 25 = %d, want %d (fits the real longest value, matching db_system.go's fixed Width)", got, wantWidth)
+	}
+}

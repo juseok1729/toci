@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/oracle/oci-go-sdk/v65/database"
 	"toci/internal/clients"
@@ -17,6 +18,14 @@ type CloudVmClusterResource struct {
 	factory *clients.Factory
 }
 
+// CloudVmClusterRow adds each DB node's own lifecycle state alongside the
+// SDK summary — same reasoning as DbSystemRow: the cluster's own STATE can
+// say "Available" while one of its nodes was independently stopped.
+type CloudVmClusterRow struct {
+	database.CloudVmClusterSummary
+	NodeStates []string
+}
+
 func NewCloudVmClusterResource(f *clients.Factory) *CloudVmClusterResource {
 	return &CloudVmClusterResource{factory: f}
 }
@@ -27,27 +36,39 @@ func (r *CloudVmClusterResource) Label() string { return "Exadata VM Clusters" }
 func (r *CloudVmClusterResource) Columns() []Column {
 	return []Column{
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
-			return deref(row.Raw.(database.CloudVmClusterSummary).DisplayName)
+			return deref(row.Raw.(CloudVmClusterRow).DisplayName)
 		}},
 		{Header: "STATE", Width: 14, Get: func(row Row) string {
-			return stateLabel(row.Raw.(database.CloudVmClusterSummary).LifecycleState)
+			return stateLabel(row.Raw.(CloudVmClusterRow).LifecycleState)
 		}},
 		{Header: "SHAPE", Width: 20, Get: func(row Row) string {
-			return deref(row.Raw.(database.CloudVmClusterSummary).Shape)
+			return deref(row.Raw.(CloudVmClusterRow).Shape)
 		}},
 		{Header: "NODES", Width: 6, Get: func(row Row) string {
-			n := row.Raw.(database.CloudVmClusterSummary).NodeCount
+			n := row.Raw.(CloudVmClusterRow).NodeCount
 			if n == nil {
 				return "-"
 			}
 			return itoa(*n)
 		}},
 		{Header: "OCPU", Width: 6, Get: func(row Row) string {
-			ocpu := row.Raw.(database.CloudVmClusterSummary).OcpuCount
+			ocpu := row.Raw.(CloudVmClusterRow).OcpuCount
 			if ocpu == nil {
 				return "-"
 			}
 			return fmt.Sprintf("%.1f", *ocpu)
+		}},
+		// Unlike a VM DB system's 2-node RAC cap, an Exadata VM cluster can
+		// span many more nodes — width generously covers up to 8 at the
+		// longest node state word ("Terminating"/"Provisioning", 12 chars):
+		// 8*12 + 7 separators = 103. Same ceiling-is-a-hard-cap risk noted
+		// on DbSystemResource's NODE/ROLE columns.
+		{Header: "NODE", Width: 103, Get: func(row Row) string {
+			states := row.Raw.(CloudVmClusterRow).NodeStates
+			if len(states) == 0 {
+				return "-"
+			}
+			return strings.Join(states, "/")
 		}},
 	}
 }
@@ -85,7 +106,10 @@ func (r *CloudVmClusterResource) List(ctx context.Context, s Scope, page string)
 		if allow != nil && !allow[deref(c.SubnetId)] {
 			continue
 		}
-		rows = append(rows, Row{ID: deref(c.Id), Name: deref(c.DisplayName), TimeCreated: timeOf(c.TimeCreated), Raw: c})
+		rows = append(rows, Row{ID: deref(c.Id), Name: deref(c.DisplayName), TimeCreated: timeOf(c.TimeCreated), Raw: CloudVmClusterRow{
+			CloudVmClusterSummary: c,
+			NodeStates:            fetchDbNodeStates(ctx, client, s.CompartmentID, nil, c.Id),
+		}})
 	}
 
 	next := ""

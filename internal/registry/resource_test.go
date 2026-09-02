@@ -38,3 +38,38 @@ func TestSumInstanceVolumeSizes(t *testing.T) {
 		t.Errorf("sumInstanceVolumeSizes() = %v, want %v", got, want)
 	}
 }
+
+func TestDbSystemRoleLabel(t *testing.T) {
+	cases := []struct {
+		name       string
+		nodeStates []string
+		role       string
+		want       string
+	}{
+		{"single node, no DG role", []string{"Available"}, "", "-"},
+		{"single node, primary", []string{"Available"}, "Primary", "Primary"},
+		{"single node, standby", []string{"Available"}, "Standby", "Standby"},
+		{"no node info, no DG role", nil, "", "-"},
+		{"2-node RAC wins over any role", []string{"Available", "Available"}, "Primary", "RAC"},
+		{"2-node RAC, no role", []string{"Stopped", "Stopped"}, "", "RAC"},
+	}
+	for _, c := range cases {
+		if got := dbSystemRoleLabel(c.nodeStates, c.role); got != c.want {
+			t.Errorf("%s: dbSystemRoleLabel(%v, %q) = %q, want %q", c.name, c.nodeStates, c.role, got, c.want)
+		}
+	}
+}
+
+func TestRegionFromOCID(t *testing.T) {
+	cases := map[string]string{
+		"ocid1.dbsystem.oc1.ap-seoul-1.anuwgljrzwnc6yaad6d7gq7xpuapbijr45f6tnuqnmy2l4kns3pezwin45ea": "ap-seoul-1",
+		"ocid1.tenancy.oc1..aaaaaaaas7p34lrvrfzqp7h2jc4z2uemrcl6howfntsntlb2ei6zvuivqfua":            "", // no region segment
+		"":            "",
+		"not-an-ocid": "",
+	}
+	for in, want := range cases {
+		if got := regionFromOCID(in); got != want {
+			t.Errorf("regionFromOCID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
