@@ -96,7 +96,7 @@ func TestColorizeStateColorsTextNotBackground(t *testing.T) {
 	plain := "web11   Running   xyz "
 
 	// Non-selected row: just the plain text, no wrapping style.
-	out := colorizeState("HEADER\n"+plain, cols)
+	out := colorizeState("HEADER\n"+plain, cols, "STATE")
 	lines := strings.Split(out, "\n")
 	if ansi.Strip(lines[1]) != plain {
 		t.Fatalf("content changed: got %q, want %q", ansi.Strip(lines[1]), plain)
@@ -117,7 +117,7 @@ func TestColorizeStateColorsTextNotBackground(t *testing.T) {
 	// Selected row: bubbles wraps the whole rendered line in selStyle before
 	// colorizeState ever sees it.
 	selLine := selStyle.Render(plain)
-	out = colorizeState("HEADER\n"+selLine, cols)
+	out = colorizeState("HEADER\n"+selLine, cols, "STATE")
 	lines = strings.Split(out, "\n")
 	if ansi.Strip(lines[1]) != plain {
 		t.Fatalf("selected row content changed: got %q, want %q", ansi.Strip(lines[1]), plain)
@@ -129,6 +129,57 @@ func TestColorizeStateColorsTextNotBackground(t *testing.T) {
 	if !strings.Contains(afterState, selBgParams) {
 		t.Errorf("selected-row background not carried past the STATE cell: %q", afterState)
 	}
+}
+
+func TestColorizeStateColorsMixedNodeCellPerPart(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+
+	goodOpenCode, _, _ := strings.Cut(stateTextGood.Render("\x01"), "\x01")
+	badOpenCode, _, _ := strings.Cut(stateTextBad.Render("\x01"), "\x01")
+	selOpenCode, _, _ := strings.Cut(selStyle.Render("\x01"), "\x01")
+
+	// DB System's NODE column: a 2-node RAC system can show multiple
+	// states joined by "/" — each part gets its own tier's color
+	// (Available green, Stopped red), not one worst-tier color for the
+	// whole cell.
+	cols := []table.Column{{Title: "NAME", Width: 6}, {Title: "NODE", Width: 20}}
+	plain := "dbsys1  Available/Stopped   "
+	start, end, _ := columnRange(cols, "NODE")
+
+	t.Run("non-selected", func(t *testing.T) {
+		out := colorizeState("HEADER\n"+plain, cols, "NODE")
+		lines := strings.Split(out, "\n")
+		if ansi.Strip(lines[1]) != plain {
+			t.Fatalf("content changed: got %q, want %q", ansi.Strip(lines[1]), plain)
+		}
+		mid := ansi.Cut(lines[1], start, end)
+		if !strings.Contains(mid, goodOpenCode) {
+			t.Errorf("Available part should be Good-colored: %q", mid)
+		}
+		if !strings.Contains(mid, badOpenCode) {
+			t.Errorf("Stopped part should be Bad-colored: %q", mid)
+		}
+	})
+
+	t.Run("selected row keeps the separator highlighted", func(t *testing.T) {
+		selLine := selStyle.Render(plain)
+		out := colorizeState("HEADER\n"+selLine, cols, "NODE")
+		lines := strings.Split(out, "\n")
+		if ansi.Strip(lines[1]) != plain {
+			t.Fatalf("content changed: got %q, want %q", ansi.Strip(lines[1]), plain)
+		}
+		mid := ansi.Cut(lines[1], start, end)
+		// The "/" between the two independently-rendered parts must carry
+		// its own Background(ociSelBg) (via selStyle) — otherwise each
+		// part's own Render() reset leaves an unhighlighted gap right at
+		// the separator.
+		sepPos := strings.Index(ansi.Strip(mid), "/")
+		around := ansi.Cut(mid, sepPos, sepPos+1)
+		if !strings.Contains(around, selOpenCode) && !strings.Contains(around, badOpenCode) {
+			t.Errorf("separator between parts isn't carrying the selected-row background: %q", mid)
+		}
+	})
 }
 
 func TestIsRecentRowChecksCreationWindow(t *testing.T) {

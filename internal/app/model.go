@@ -1289,7 +1289,8 @@ func (m Model) View() string {
 			main.WriteString(statusStyle.Render("loading..."))
 		default:
 			tableView := whitenDataRows(m.table.View())
-			tableView = colorizeState(tableView, m.table.Columns())
+			tableView = colorizeState(tableView, m.table.Columns(), "STATE")
+			tableView = colorizeState(tableView, m.table.Columns(), "NODE")
 			if m.blinkEnabled {
 				tableView = blinkRecentRows(tableView, m.table.Columns(), m.recentRowNames(), m.blinkOn)
 			}

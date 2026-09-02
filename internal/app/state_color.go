@@ -162,10 +162,16 @@ func stateStyleFor(value string, selected bool) (lipgloss.Style, bool) {
 	}
 }
 
-// colorizeState highlights the STATE column of an already-rendered resource
-// table (the string bubbles' table.Model.View() returns) — every resource
-// kind, not just Instance, since every kind's STATE column ends up in one
-// of the three tiers above.
+// colorizeState highlights a named column (e.g. "STATE", or DB System's
+// "NODE") of an already-rendered resource table (the string bubbles'
+// table.Model.View() returns) — every resource kind, not just Instance,
+// since every kind's state values end up in one of the three tiers above.
+//
+// A column like NODE can hold several states joined by "/" (a 2-node RAC
+// DB system might show "Available/Stopped") — each "/"-separated part is
+// colored independently by its own tier, so that example renders as
+// green/red rather than one worst-tier color for the whole cell, letting a
+// user tell which specific node needs attention.
 //
 // This runs as a post-render pass instead of coloring the cell value at
 // Column.Get() time, which was tried first and broke two ways: bubbles
@@ -183,8 +189,8 @@ func stateStyleFor(value string, selected bool) (lipgloss.Style, bool) {
 // already open at that cut point — the selected row's highlight, if any —
 // so the reassembled line keeps that highlight going right through and past
 // the colored text instead of cutting it off.
-func colorizeState(view string, cols []table.Column) string {
-	start, end, ok := columnRange(cols, "STATE")
+func colorizeState(view string, cols []table.Column, title string) string {
+	start, end, ok := columnRange(cols, title)
 	if !ok {
 		return view
 	}
@@ -196,18 +202,48 @@ func colorizeState(view string, cols []table.Column) string {
 		}
 		selected := selectedLinePrefix != "" && strings.HasPrefix(line, selectedLinePrefix)
 		mid := ansi.Strip(ansi.Cut(line, start, end))
-		style, ok := stateStyleFor(mid, selected)
+		recolored, ok := recolorStateCell(mid, selected)
 		if !ok {
 			continue
 		}
-		// Paint the whole cell (word + its padding), not just the word — on
-		// a selected row the padding needs the Background too, to keep the
-		// row highlight unbroken (see the Selected styles' doc above).
 		left := ansi.Cut(line, 0, start)
 		right := ansi.Cut(line, end, 1<<20)
-		lines[i] = left + style.Render(mid) + right
+		lines[i] = left + recolored + right
 	}
 	return strings.Join(lines, "\n")
+}
+
+// recolorStateCell colors a rendered STATE/NODE cell's plain text, one
+// "/"-separated part at a time (a single-value STATE cell is just one
+// part). Reports false — leaving the caller's line untouched — if no part
+// matched any tier.
+//
+// Each part is colored via its own Render() call, which independently
+// opens and resets — so on a selected row, the "/" separators between
+// parts need their own Background(ociSelBg) (via selStyle) or they'd show
+// up as small unhighlighted gaps in the row's highlight, the same class of
+// bug the whole-cell Selected styles exist to avoid.
+func recolorStateCell(mid string, selected bool) (string, bool) {
+	parts := strings.Split(mid, "/")
+	rendered := make([]string, len(parts))
+	matched := false
+	for i, part := range parts {
+		style, ok := stateStyleFor(part, selected)
+		if !ok {
+			rendered[i] = part
+			continue
+		}
+		matched = true
+		rendered[i] = style.Render(part)
+	}
+	if !matched {
+		return "", false
+	}
+	sep := "/"
+	if selected {
+		sep = selStyle.Render("/")
+	}
+	return strings.Join(rendered, sep), true
 }
 
 // columnRange returns a named column's display-column span within a
