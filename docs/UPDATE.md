@@ -2,6 +2,19 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.10
+
+### DB Node / Data Guard 가시성 추가 (DB System, Exadata VM Cluster)
+
+- **문제**: DB System의 STATE(`Available`)는 DbSystem 리소스 자체 상태일 뿐, 그 안에서 실제 DB를 돌리는 DB Node는 별도의 LifecycleState를 가진다 — 노드만 따로 정지시켜도 DbSystem은 계속 `Available`로 보임. 실제로 DEFAULT 테넌시의 한 테스트 컴파트먼트에서 DB System 10개 전부가 STATE=Available인데 NODE는 전부 Stopped인 걸 실측으로 확인.
+- **NODE 컬럼** 추가 — `ListDbNodes`로 각 노드의 실제 상태를 조회. 이 API는 `DbSystemId`나 `VmClusterId` 둘 중 하나가 반드시 있어야 하는데(SDK 구조체 태그는 둘 다 `mandatory:false`로만 표기되어 있어 실제로 호출해보고서야 발견 — 없으면 400 `MissingParameter`), DB System/Exadata VM Cluster 당 한 번씩 호출(컴파트먼트당 리소스 수가 적어서 비용 문제 없음). 2노드 RAC처럼 값이 여러 개면 `/`로 join.
+- **ROLE 컬럼** 추가 — Primary/Standby/RAC 구분. 2노드 이상이면 무조건 RAC(OCI에서 노드 여러 개인 VM DB System은 RAC 말고는 존재할 수 없음), 아니면 Data Guard 역할(`ListDatabases` → `ListDataGuardAssociations`, DB System당 최대 2콜 추가)을 보여주고 둘 다 없으면 `-`.
+- **크로스리전 Data Guard 힌트**: Standby가 다른 리전에 있으면 그 리전 목록엔 애초에 안 뜨는데(리소스 목록 조회 자체가 리전 스코프), Primary 쪽에서라도 상대가 어디 있는지 알 수 있게 `Primary→ap-tokyo-1`처럼 표시. 추가 API 호출 없이 `PeerDbSystemId`(OCID 안에 리전이 그대로 박혀있음, 예: `ocid1.dbsystem.oc1.ap-tokyo-1.xxxx`)를 파싱해서 얻음.
+- **MEM(GB)/DISK(GB) 컬럼**도 같이 추가 — `MemorySizeInGBs`는 `ListDbSystems`엔 항상 nil이고 `GetDbSystem`에서만 실제 값이 나옴(실측 확인). `DataStorageSizeInGBs`(DATA)+`RecoStorageSizeInGB`(RECO)는 반대로 `ListDbSystems`에 이미 들어있어서 추가 호출 불필요.
+- `colorizeState`를 STATE 전용에서 임의 컬럼(제목 파라미터) + 셀 값을 `/` 기준으로 쪼개 **부분별로 독립 색칠**하도록 일반화 — `Available/Stopped`가 통째로 한 색이 아니라 초록/빨강으로 따로 칠해져서, 여러 노드 중 어느 게 문제인지 한눈에 보임.
+- **회귀 수정**: `Row.Raw`를 원본 SDK 구조체에서 `DbSystemRow`/`CloudVmClusterRow` 래퍼로 바꾸면서, Mermaid 다이어그램 export(`internal/app/diagram.go`)의 타입 단언이 조용히 실패할 뻔한 걸 미리 전체 코드베이스를 훑어서 잡아 고침.
+- **버그 수정**: ROLE/NODE 컬럼의 `Width`(예: 10, 20)가 `fitColumnWidth`에서 힌트가 아니라 **하드 상한선**으로 쓰이는 걸 놓쳐서, 긴 값(`Standby→af-johannesburg-1` 같은 크로스리전 힌트, 다수 노드 Exadata)이 잘릴 뻔했음 — 각각 실제 최악값 기준으로 재계산해서 수정(ROLE/DB System NODE: 25, Exadata NODE: 103). 회귀 테스트로 이 패턴 고정.
+
 ## v0.1.8
 
 ### STATE 컬럼 재배치 + 배지 → 텍스트 색상 전환
