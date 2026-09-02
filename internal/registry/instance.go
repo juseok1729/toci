@@ -25,8 +25,9 @@ func (r *InstanceResource) Label() string { return "Instances" }
 // can both read from a single value.
 type instanceRow struct {
 	core.Instance
-	Metrics instanceMetrics
-	IPs     instanceIPs
+	Metrics   instanceMetrics
+	IPs       instanceIPs
+	StorageGB *int64
 }
 
 func pctString(v *float64) string {
@@ -41,6 +42,13 @@ func floatString(v *float32) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.1f", *v)
+}
+
+func int64String(v *int64) string {
+	if v == nil {
+		return "-"
+	}
+	return itoa(int(*v))
 }
 
 func ipString(ip string) string {
@@ -96,6 +104,9 @@ func (r *InstanceResource) Columns() []Column {
 			}
 			return floatString(cfg.MemoryInGBs)
 		}},
+		{Header: "DISK(GB)", Width: 8, Get: func(row Row) string {
+			return int64String(row.Raw.(instanceRow).StorageGB)
+		}},
 		{Header: "USAGE(CPU/MEM %)", Width: 18, Get: func(row Row) string {
 			m := row.Raw.(instanceRow).Metrics
 			return pctString(m.CPUPercent) + "/" + pctString(m.MemPercent)
@@ -135,6 +146,15 @@ func (r *InstanceResource) List(ctx context.Context, s Scope, page string) ([]Ro
 
 	ips := fetchInstanceIPs(ctx, client, vnClient, s.CompartmentID)
 
+	var storage map[string]int64
+	if bsClient, err := r.factory.Blockstorage(s.Region); err == nil {
+		ads := make([]string, 0, len(resp.Items))
+		for _, i := range resp.Items {
+			ads = append(ads, deref(i.AvailabilityDomain))
+		}
+		storage = fetchInstanceStorage(ctx, client, bsClient, s.CompartmentID, ads)
+	}
+
 	var allow map[string]bool
 	if s.VcnID != "" {
 		allow, err = instanceIDsInVcn(ctx, vnClient, client, s.CompartmentID, s.VcnID)
@@ -149,10 +169,15 @@ func (r *InstanceResource) List(ctx context.Context, s Scope, page string) ([]Ro
 		if allow != nil && !allow[id] {
 			continue
 		}
+		var storageGB *int64
+		if size, ok := storage[id]; ok {
+			storageGB = &size
+		}
 		rows = append(rows, Row{ID: id, Name: deref(i.DisplayName), TimeCreated: timeOf(i.TimeCreated), Raw: instanceRow{
-			Instance: i,
-			Metrics:  metrics[id],
-			IPs:      ips[id],
+			Instance:  i,
+			Metrics:   metrics[id],
+			IPs:       ips[id],
+			StorageGB: storageGB,
 		}})
 	}
 

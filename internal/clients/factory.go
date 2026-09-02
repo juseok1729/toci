@@ -87,6 +87,17 @@ func (f *Factory) Compute(region string) (core.ComputeClient, error) {
 	})
 }
 
+func (f *Factory) Blockstorage(region string) (core.BlockstorageClient, error) {
+	return get(f, region, "blockstorage", func() (core.BlockstorageClient, error) {
+		c, err := core.NewBlockstorageClientWithConfigurationProvider(f.provider)
+		if err != nil {
+			return core.BlockstorageClient{}, err
+		}
+		c.SetRegion(region)
+		return c, nil
+	})
+}
+
 func (f *Factory) Bastion(region string) (bastion.BastionClient, error) {
 	return get(f, region, "bastion", func() (bastion.BastionClient, error) {
 		c, err := bastion.NewBastionClientWithConfigurationProvider(f.provider)
