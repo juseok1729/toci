@@ -43,15 +43,11 @@ func floatString(v *float32) string {
 	return fmt.Sprintf("%.1f", *v)
 }
 
-func ipPairString(ips instanceIPs) string {
-	pub, priv := ips.Public, ips.Private
-	if pub == "" {
-		pub = "-"
+func ipString(ip string) string {
+	if ip == "" {
+		return "-"
 	}
-	if priv == "" {
-		priv = "-"
-	}
-	return pub + "/" + priv
+	return ip
 }
 
 // shortAD trims the tenancy-prefixed availability domain (e.g.
@@ -74,8 +70,11 @@ func (r *InstanceResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(instanceRow).DisplayName)
 		}},
-		{Header: "IP(PUB/PRI)", Width: 30, Get: func(row Row) string {
-			return ipPairString(row.Raw.(instanceRow).IPs)
+		{Header: "PUBLIC IP", Width: 15, Get: func(row Row) string {
+			return ipString(row.Raw.(instanceRow).IPs.Public)
+		}},
+		{Header: "PRIVATE IP", Width: 15, Get: func(row Row) string {
+			return ipString(row.Raw.(instanceRow).IPs.Private)
 		}},
 		{Header: "SHAPE", Width: 20, Get: func(row Row) string {
 			return deref(row.Raw.(instanceRow).Shape)

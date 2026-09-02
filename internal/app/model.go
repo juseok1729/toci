@@ -333,8 +333,8 @@ func applyFilter(rows []registry.Row, query string) []registry.Row {
 // fitColumnWidth shrinks a column to whatever its header and the loaded
 // rows actually need, up to the resource's declared Width — a ceiling, not
 // a fixed size. Without this every column reserves its full declared width
-// even when actual values are far shorter (e.g. IP(PUB/PRI) declares room
-// for two full IPv4 addresses, but most rows show far less), which both
+// even when actual values are far shorter (e.g. PUBLIC IP declares room
+// for a full IPv4 address, but plenty of instances have none), which both
 // wastes space and, with enough wide columns, can push later ones past the
 // terminal's width entirely.
 func fitColumnWidth(header string, values []string, ceiling int) int {
