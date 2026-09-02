@@ -77,7 +77,7 @@ func (r *DbSystemResource) List(ctx context.Context, s Scope, page string) ([]Ro
 		if allow != nil && !allow[deref(d.SubnetId)] {
 			continue
 		}
-		rows = append(rows, Row{ID: deref(d.Id), Name: deref(d.DisplayName), Raw: d})
+		rows = append(rows, Row{ID: deref(d.Id), Name: deref(d.DisplayName), TimeCreated: timeOf(d.TimeCreated), Raw: d})
 	}
 
 	next := ""

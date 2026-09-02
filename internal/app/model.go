@@ -79,6 +79,10 @@ type regionsMsg struct {
 	err   error
 }
 
+// recentRowWindow is the "created within" threshold that makes a row
+// eligible to blink.
+const recentRowWindow = 3 * 24 * time.Hour
+
 type actionResultMsg struct {
 	label string
 	err   error
@@ -188,6 +192,13 @@ type Model struct {
 	// this was visibly eating the table a line at a time). Keeping the
 	// pre-subtraction value here is what makes that round-trip safe.
 	tableHeight int
+
+	// blinkOn alternates on blinkTickCmd's timer to drive blinkRecentRows.
+	blinkOn bool
+	// blinkEnabled is the user-facing on/off switch for the whole feature
+	// ("b" key) — some users just don't want blinking rows, independent of
+	// blinkOn's animation timer.
+	blinkEnabled bool
 }
 
 func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, profile, version string) Model {
@@ -217,11 +228,12 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 		autoRedirect: true,
 		mode:         modeSplash,
 		splashPhrase: splashPhrases[rand.Intn(len(splashPhrases))],
+		blinkEnabled: true,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.load(), m.fetchRootName(), splashTickCmd())
+	return tea.Batch(m.load(), m.fetchRootName(), splashTickCmd(), blinkTickCmd())
 }
 
 func (m Model) current() registry.Resource {
@@ -254,6 +266,14 @@ func (m Model) fetchRegions() tea.Cmd {
 		items, err := listRegions(context.Background(), factory, region, tenancyID)
 		return regionsMsg{items: items, err: err}
 	}
+}
+
+type blinkTickMsg struct{}
+
+func blinkTickCmd() tea.Cmd {
+	return tea.Tick(600*time.Millisecond, func(time.Time) tea.Msg {
+		return blinkTickMsg{}
+	})
 }
 
 func (m Model) fetchBastions() tea.Cmd {
@@ -628,6 +648,23 @@ func (m *Model) exitCompartment() tea.Cmd {
 	return m.load()
 }
 
+// isRecentRow reports whether row was created within recentRowWindow.
+func (m Model) isRecentRow(row registry.Row) bool {
+	return row.TimeCreated.After(time.Now().Add(-recentRowWindow))
+}
+
+// recentRowNames is the set of displayed row names eligible to blink, for
+// blinkRecentRows' content-match against the rendered table (see its doc).
+func (m Model) recentRowNames() map[string]bool {
+	names := make(map[string]bool)
+	for _, row := range m.displayRows {
+		if m.isRecentRow(row) {
+			names[row.Name] = true
+		}
+	}
+	return names
+}
+
 func (m *Model) selected() (registry.Row, bool) {
 	i := m.table.Cursor()
 	if i < 0 || i >= len(m.displayRows) {
@@ -692,6 +729,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, splashTickCmd()
+
+	case blinkTickMsg:
+		m.blinkOn = !m.blinkOn
+		return m, blinkTickCmd()
 
 	case rowsMsg:
 		if m.mode == modeSplash {
@@ -1027,6 +1068,15 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, m.load()
 
+	case "b":
+		m.blinkEnabled = !m.blinkEnabled
+		if m.blinkEnabled {
+			m.statusMsg = "blink: on"
+		} else {
+			m.statusMsg = "blink: off"
+		}
+		return m, nil
+
 	case "e":
 		path := exportFilename(m.current().Key(), time.Now())
 		if err := exportCSV(path, m.current().Columns(), m.displayRows); err != nil {
@@ -1242,6 +1292,9 @@ func (m Model) View() string {
 			if m.current().Key() == "instance" {
 				tableView = colorizeInstanceState(tableView, m.table.Columns())
 			}
+			if m.blinkEnabled {
+				tableView = blinkRecentRows(tableView, m.table.Columns(), m.recentRowNames(), m.blinkOn)
+			}
 			main.WriteString(m.renderTableBox(tableView))
 		}
 		main.WriteString("\n")
@@ -1449,6 +1502,11 @@ func (m Model) helpEntries() []helpEntry {
 	add("/", "filter")
 	add("r", "region")
 	add("R", "refresh")
+	if m.blinkEnabled {
+		add("b", "blink: on")
+	} else {
+		add("b", "blink: off")
+	}
 	add("e", "export csv")
 	if m.vcnFilterName != "" {
 		add("m", "export diagram")

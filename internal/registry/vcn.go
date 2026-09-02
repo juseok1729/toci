@@ -50,7 +50,7 @@ func (r *VcnResource) List(ctx context.Context, s Scope, page string) ([]Row, st
 
 	rows := make([]Row, 0, len(resp.Items))
 	for _, v := range resp.Items {
-		rows = append(rows, Row{ID: deref(v.Id), Name: deref(v.DisplayName), Raw: v})
+		rows = append(rows, Row{ID: deref(v.Id), Name: deref(v.DisplayName), TimeCreated: timeOf(v.TimeCreated), Raw: v})
 	}
 
 	next := ""

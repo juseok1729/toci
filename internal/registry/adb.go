@@ -95,7 +95,7 @@ func (r *AutonomousDatabaseResource) List(ctx context.Context, s Scope, page str
 		if allow != nil && !allow[deref(a.SubnetId)] {
 			continue
 		}
-		rows = append(rows, Row{ID: deref(a.Id), Name: adbName(a), Raw: a})
+		rows = append(rows, Row{ID: deref(a.Id), Name: adbName(a), TimeCreated: timeOf(a.TimeCreated), Raw: a})
 	}
 
 	next := ""

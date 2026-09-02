@@ -5,6 +5,9 @@ package registry
 import (
 	"context"
 	"strconv"
+	"time"
+
+	"github.com/oracle/oci-go-sdk/v65/common"
 )
 
 // Scope is the (region, compartment) pair a listing is evaluated against.
@@ -18,10 +21,17 @@ type Scope struct {
 
 // Row is one line in a resource table. Raw holds the original SDK struct so
 // the detail view can render it without the resource needing a Detail RPC.
+//
+// TimeCreated is the resource's own creation timestamp — every List
+// implementation below sets it from the underlying SDK struct's own
+// TimeCreated field, which OCI exposes on essentially every resource type.
+// It's the zero Time if a resource kind genuinely has none. Used to drive
+// the "blink recently created rows" feature in internal/app.
 type Row struct {
-	ID   string
-	Name string
-	Raw  any
+	ID          string
+	Name        string
+	Raw         any
+	TimeCreated time.Time
 }
 
 // Column renders one field of a Row into table text. Get is a closure over
@@ -57,6 +67,16 @@ type ActionSpec struct {
 type Actionable interface {
 	Actions() []ActionSpec
 	RunAction(ctx context.Context, s Scope, key, id string) error
+}
+
+// timeOf converts an SDK timestamp pointer to a plain time.Time, zero if
+// nil — every List() below uses this to fill Row.TimeCreated from the
+// underlying struct's own TimeCreated field.
+func timeOf(t *common.SDKTime) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return t.Time
 }
 
 func deref(s *string) string {

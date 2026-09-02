@@ -50,7 +50,7 @@ func (r *NsgResource) List(ctx context.Context, s Scope, page string) ([]Row, st
 
 	rows := make([]Row, 0, len(resp.Items))
 	for _, n := range resp.Items {
-		rows = append(rows, Row{ID: deref(n.Id), Name: deref(n.DisplayName), Raw: n})
+		rows = append(rows, Row{ID: deref(n.Id), Name: deref(n.DisplayName), TimeCreated: timeOf(n.TimeCreated), Raw: n})
 	}
 
 	next := ""
