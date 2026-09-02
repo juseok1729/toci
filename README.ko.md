@@ -17,12 +17,12 @@
 ## 스크린샷
 
 <p align="center">
-  <img src="assets/screenshot-instance.png" alt="Instance 테이블" width="100%">
+  <img src="assets/screenshot-inst.png" alt="Instance 테이블" width="100%">
 </p>
 
 <p align="center">
-  <img src="assets/screenshot-security-list.png" alt="Security List 테이블" width="49%">
-  <img src="assets/screenshot-security-list-rules.png" alt="Security List 규칙 뷰" width="49%">
+  <img src="assets/screenshot-sl.png" alt="Security List 테이블" width="49%">
+  <img src="assets/screenshot-sl-rules.png" alt="Security List 규칙 뷰" width="49%">
 </p>
 
 기본값은 **읽기 전용**입니다. 쓰기 액션(인스턴스 start/stop, Bastion SSH 세션)은 명시적인 `--write` 플래그와, 리소스 이름을 직접 타이핑해야 하는 확인 절차 뒤에만 동작합니다.

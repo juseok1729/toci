@@ -17,12 +17,12 @@ A fast, keyboard-driven terminal UI for browsing and managing Oracle Cloud Infra
 ## Screenshots
 
 <p align="center">
-  <img src="assets/screenshot-instance.png" alt="Instance table" width="100%">
+  <img src="assets/screenshot-inst.png" alt="Instance table" width="100%">
 </p>
 
 <p align="center">
-  <img src="assets/screenshot-security-list.png" alt="Security List table" width="49%">
-  <img src="assets/screenshot-security-list-rules.png" alt="Security List rules view" width="49%">
+  <img src="assets/screenshot-sl.png" alt="Security List table" width="49%">
+  <img src="assets/screenshot-sl-rules.png" alt="Security List rules view" width="49%">
 </p>
 
 Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) are gated behind an explicit `--write` flag and a type-the-resource-name confirmation.
