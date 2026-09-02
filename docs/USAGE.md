@@ -19,10 +19,10 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 `~/.oci/config`에 프로파일이 이미 있어야 한다 (OCI CLI와 동일한 설정 파일을 그대로 사용).
 
 ```bash
-./toci                              # 프로파일: $OCI_CLI_PROFILE 또는 DEFAULT
-./toci --profile ETEVERS          # 특정 프로파일
-./toci --profile ETEVERS --region us-ashburn-1   # 리전 강제 지정 (기본: 프로파일의 region)
-./toci --profile ETEVERS --write  # 쓰기 액션(인스턴스 start/stop) 활성화
+./toci                                # 프로파일: $OCI_CLI_PROFILE 또는 DEFAULT
+./toci --profile DEV                  # 특정 프로파일
+./toci --profile DEV --region us-ashburn-1 # 리전 강제 지정 (기본: 프로파일의 region)
+./toci --profile DEV --write          # 쓰기 액션(인스턴스 start/stop) 활성화
 ```
 
 기본은 **readonly** — `--write` 없이는 `a` 키를 눌러도 아무 것도 실행되지 않는다.
