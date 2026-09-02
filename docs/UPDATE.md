@@ -2,6 +2,30 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.8
+
+### STATE 컬럼 재배치 + 배지 → 텍스트 색상 전환
+
+- STATE를 NAME 바로 다음 컬럼으로 이동 — 이전엔 각 리소스마다 STATE가 맨 끝이라, 어떤 리소스든 이름 보고 바로 다음에 상태를 확인하려면 옆으로 스크롤 없이도 눈이 왔다 갔다 해야 했음. `drg`/`nsg`는 원래도 NAME 다음이라 그대로 뒀고, 나머지 10개 리소스 파일만 컬럼 순서를 바꿈.
+- STATE 값을 배경색 배지(`stateBgRunning` 등, `Background`로 칠하던 방식)에서 **텍스트 색만** 칠하는 방식(`stateTextGood` 등)으로 전환 — 일반 행은 다른 컬럼처럼 배경 없이 텍스트만 색이 있어서 테이블이 덜 시끄러워짐. 선택된 행에서는 텍스트 색 스타일에 `Background(ociSelBg)`를 별도로 얹은 `*Selected` 변형을 써서, `style.Render()`가 만드는 리셋 코드가 선택 행 하이라이트 중간에 구멍을 내는 걸 막음(`whitenDataRows`/`colorizeInstanceState`(현 `colorizeState`) 개발 때 이미 겪었던 것과 같은 종류의 함정).
+
+### 상태값 표시를 Title Case로 (`Running`, `Needs Attention`)
+
+- OCI SDK가 주는 전부 대문자 enum 값(`RUNNING`, `NEEDS_ATTENTION`)을 그대로 보여주지 않고, `internal/registry/resource.go`의 제네릭 헬퍼 `stateLabel[T ~string]`이 언더스코어 기준으로 단어를 쪼개 각 단어 첫 글자만 대문자로 바꿔 표시 — `NEEDS_ATTENTION` → `Needs Attention`. 리소스 12종의 `LifecycleState` 타입이 전부 다른 SDK enum 타입이라 제네릭으로 만들어서 타입 단언 없이 공용으로 씀.
+- 색칠 로직(`colorizeState`)의 매칭 문자열도 이 Title Case 결과에 맞춰 `"RUNNING"` → `"Running"` 등으로 같이 바꿈 — 안 바꾸면 대소문자가 안 맞아 색이 전혀 안 붙는다.
+
+### STATE 색상을 전체 12종 리소스로 확장 + 실패/주의 등급 추가
+
+- 기존엔 Instance 리소스에서만, RUNNING(초록)/STOPPED(빨강) 두 값만 색이 붙었음. 이번에 `colorizeInstanceState`를 `colorizeState`로 일반화해서 **모든 리소스 종류의 STATE 컬럼**에 적용되도록 `View()`의 `if current().Key() == "instance"` 게이트를 제거.
+- 3단계 색상 등급 도입 — Good(초록: Running/Active/Available/Standby), Bad(빨강: Stopped/Failed/Inaccessible/Unavailable), Warn(노랑: Needs Attention). 판정은 **Warn → Bad → Good** 순으로 고정 — ADB의 `Available Needs Attention`처럼 여러 등급의 단어를 동시에 포함하는 값이 있어서, 순서를 안 지키면 "Available"이 먼저 걸려 Good으로 잘못 칠해짐.
+- Provisioning/Terminated/Updating 같은 전환·종료 상태는 의도적으로 색을 안 붙임 — 신호가 뚜렷한 성공/실패/주의만 색으로 강조하고 나머지까지 칠하면 오히려 신호가 흐려짐.
+- 리소스별로 실제 SDK가 갖는 `LifecycleState` 값 전체와 등급 매핑을 `docs/COLOR_SYSTEM.md`에 표로 정리해둠.
+
+### 문서
+
+- README(영/한) Screenshots 섹션 이미지를 최신 UI(STATE 위치, 색상 텍스트) 반영한 캡처로 교체.
+- README(영/한)의 "RUNNING/STOPPED 배지" 문구를 위 변경사항에 맞게 갱신.
+
 ## v0.1.4
 
 ### 사이드바 트리 제거, VCN 선택 시 검색창 직결
