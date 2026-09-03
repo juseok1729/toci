@@ -2,6 +2,24 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.12
+
+### 커서(선택된 행)에서 EDITION 색상이 안 보이는 문제 → 파스텔로 정착
+
+- v0.1.11에서 EDITION 색을 "강렬하게" 요청받아 비비드 컬러로 바꿨더니, 선택된 행(초록 하이라이트, `ociSelBg` `#386848`)에 올라가면 잘 안 보인다는 피드백 — 특히 `EE-DEV`의 초록은 배경과 색 계열 자체가 겹쳐서(hue collision) 최악.
+- 시도 1: 선택된 셀만 검정 배경(배지처럼) → 하이라이트 바 중간이 뚝 끊긴 것처럼 보여서 롤백.
+- 시도 2: 같은 색상의 어두운 톤("형광펜 위 잉크"처럼) → 사용자가 직접 픽스한 방향으로, 채도 있는 색끼리 부딪히는 건 해결됐지만 요청으로 다시 롤백.
+- **최종**: 각 티어 색의 **파스텔(연한) 톤**으로 선택 행 전용 색을 지정 — SE2 `#7DF9FF`, EE `#AFD7FF`, EE-HP `#E2C4FF`, EE-EP `#FFB8DE`, EE-DEV는 우연히 기존 `ociHighlt`(`#e8c878`, 골드)와 같은 값이라 그 상수를 그대로 재사용. 밝기 차이로 대비를 주는 방식이라 채도 경쟁 없이 배경과 안 부딪힘.
+- 참고로 `ociSelBg`(`#386848`)를 "짙은 초록"이라고 불렀었는데, 실제 HSL 밝기는 약 31%로 진짜 다크 톤이 아니라 muted한 중간 톤에 가깝다 — 색 충돌은 밝기보다 채도 경쟁 때문이었음.
+
+## v0.1.11
+
+### DB System EDITION 축약어 + 색상, VERSION 컬럼 추가
+
+- **EDITION 축약**: `ENTERPRISE_EDITION_EXTREME_PERFORMANCE` 같은 원본 enum이 너무 길어서, Oracle 라이선싱 문서/업계에서 실제 쓰는 축약어로 변환(`dbEditionAbbrev`) — `STANDARD_EDITION`→`SE2`, `ENTERPRISE_EDITION`→`EE`, `..._HIGH_PERFORMANCE`→`EE-HP`, `..._EXTREME_PERFORMANCE`→`EE-EP`, `..._DEVELOPER`→`EE-DEV`(라이선스 비용 없는 개발/테스트 전용 에디션). 컬럼 폭도 39→6으로 축소.
+- **EDITION 색상**: STATE/NODE의 Good/Bad/Warn과는 다른 축(에디션은 상태/헬스 신호가 아니라 티어 구분)이라 `colorizeState`에 얹지 않고 별도 `colorizeEdition` 패스로 분리. 정확히 일치(`==`)로 매칭 — `EE`가 `EE-HP`/`EE-EP`/`EE-DEV`의 접두어라 `Contains`였으면 오작동했을 부분.
+- **VERSION 컬럼**: `DbSystemSummary.Version`이 `ListDbSystems`에 이미 들어있어서(추가 API 호출 불필요) 바로 노출 — MEM(GB)처럼 `GetDbSystem`이 따로 필요한 필드와 달리 공짜.
+
 ## v0.1.10
 
 ### DB Node / Data Guard 가시성 추가 (DB System, Exadata VM Cluster)
