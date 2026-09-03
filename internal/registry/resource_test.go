@@ -3,6 +3,8 @@ package registry
 import (
 	"reflect"
 	"testing"
+
+	"github.com/oracle/oci-go-sdk/v65/database"
 )
 
 func TestStateLabel(t *testing.T) {
@@ -70,6 +72,22 @@ func TestRegionFromOCID(t *testing.T) {
 	for in, want := range cases {
 		if got := regionFromOCID(in); got != want {
 			t.Errorf("regionFromOCID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDbEditionAbbrev(t *testing.T) {
+	cases := map[database.DbSystemSummaryDatabaseEditionEnum]string{
+		database.DbSystemSummaryDatabaseEditionStandardEdition:                     "SE2",
+		database.DbSystemSummaryDatabaseEditionEnterpriseEdition:                   "EE",
+		database.DbSystemSummaryDatabaseEditionEnterpriseEditionHighPerformance:    "EE-HP",
+		database.DbSystemSummaryDatabaseEditionEnterpriseEditionExtremePerformance: "EE-EP",
+		database.DbSystemSummaryDatabaseEditionEnterpriseEditionDeveloper:          "EE-DEV",
+		"SOME_FUTURE_EDITION": "SOME_FUTURE_EDITION", // unknown value falls back to the raw enum
+	}
+	for in, want := range cases {
+		if got := dbEditionAbbrev(in); got != want {
+			t.Errorf("dbEditionAbbrev(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

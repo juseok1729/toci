@@ -1291,6 +1291,7 @@ func (m Model) View() string {
 			tableView := whitenDataRows(m.table.View())
 			tableView = colorizeState(tableView, m.table.Columns(), "STATE")
 			tableView = colorizeState(tableView, m.table.Columns(), "NODE")
+			tableView = colorizeEdition(tableView, m.table.Columns())
 			if m.blinkEnabled {
 				tableView = blinkRecentRows(tableView, m.table.Columns(), m.recentRowNames(), m.blinkOn)
 			}

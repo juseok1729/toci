@@ -28,6 +28,28 @@ func NewDbSystemResource(f *clients.Factory) *DbSystemResource {
 	return &DbSystemResource{factory: f}
 }
 
+// dbEditionAbbrev maps OCI's DatabaseEdition enum to the abbreviation
+// Oracle's own licensing docs and the industry actually use — the full
+// enum name ("ENTERPRISE_EDITION_EXTREME_PERFORMANCE") is far too wide for
+// a column. Falls back to the raw enum string for any value added to the
+// SDK after this mapping was written.
+func dbEditionAbbrev(edition database.DbSystemSummaryDatabaseEditionEnum) string {
+	switch edition {
+	case database.DbSystemSummaryDatabaseEditionStandardEdition:
+		return "SE2"
+	case database.DbSystemSummaryDatabaseEditionEnterpriseEdition:
+		return "EE"
+	case database.DbSystemSummaryDatabaseEditionEnterpriseEditionHighPerformance:
+		return "EE-HP"
+	case database.DbSystemSummaryDatabaseEditionEnterpriseEditionExtremePerformance:
+		return "EE-EP"
+	case database.DbSystemSummaryDatabaseEditionEnterpriseEditionDeveloper:
+		return "EE-DEV"
+	default:
+		return string(edition)
+	}
+}
+
 func (r *DbSystemResource) Key() string   { return "db-system" }
 func (r *DbSystemResource) Label() string { return "DB Systems" }
 
@@ -42,8 +64,16 @@ func (r *DbSystemResource) Columns() []Column {
 		{Header: "SHAPE", Width: 24, Get: func(row Row) string {
 			return deref(row.Raw.(DbSystemRow).Shape)
 		}},
-		{Header: "EDITION", Width: 39, Get: func(row Row) string {
-			return string(row.Raw.(DbSystemRow).DatabaseEdition)
+		{Header: "EDITION", Width: 6, Get: func(row Row) string {
+			return dbEditionAbbrev(row.Raw.(DbSystemRow).DatabaseEdition)
+		}},
+		// Straight off ListDbSystems, like SHAPE/EDITION — no extra call.
+		{Header: "VERSION", Width: 12, Get: func(row Row) string {
+			v := row.Raw.(DbSystemRow).Version
+			if v == nil {
+				return "-"
+			}
+			return *v
 		}},
 		{Header: "OCPU", Width: 6, Get: func(row Row) string {
 			cpu := row.Raw.(DbSystemRow).CpuCoreCount
