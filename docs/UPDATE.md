@@ -2,6 +2,18 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.13
+
+### Instance / DB System / Exadata 리소스 로딩 병렬화
+
+사용자가 "bumsik 컴파트먼트에서 DB System 목록 불러오는 게 좀 걸린다"고 지적한 게 계기 — 확인해보니 행 하나당 여러 API 콜이 필요한 리소스(DB System, Instance, Exadata)들이 전부 **행 개수만큼 순차로** 호출하고 있었음. 나머지 9개 리소스(Compartment/VCN/Subnet/Security List/NSG/DRG/Route Table/LB/ADB)는 전수 감사해서 행 단위 추가 API 호출이 없는 걸 확인하고 그대로 둠.
+
+- **DB System**: 행마다 `GetDbSystem`(메모리), `ListDbNodes`(노드 상태), `ListDatabases`+`ListDataGuardAssociations`(Data Guard 역할) 최대 4콜이 `for` 루프 안에서 순차 실행되고 있었음. `bumsik`(10개)이면 최악 40콜. → 행별로 goroutine을 fan-out, 각자 **자기 인덱스의 슬라이스 칸(`rows[i]`)에만 쓰기** 때문에 락 없이 안전.
+- **Instance**: `fetchInstanceIPs`가 인스턴스마다 `GetVnic`을 순차 호출하고 있었음(단일 NIC이면 인스턴스당 1콜). 여기는 결과를 **map**에 모으는 구조라, DB System과 달리 슬라이스 인덱스 방식을 못 씀 — Go map은 서로 다른 키라도 동시 쓰기가 안전하지 않아서, 각 goroutine의 결과를 **채널로 모아 단일 goroutine에서만 map에 쓰는** fan-out/fan-in 패턴 사용. 추가로 `List()` 최상위에서 metrics/IPs/storage 세 개의 독립적인 조회가 순서대로 실행되던 것도 동시 실행으로 바꿈.
+- **Exadata VM Cluster**: DB System과 완전히 같은 패턴(행마다 `fetchDbNodeStates` 순차 호출)이라 동일한 방식(슬라이스 인덱스 fan-out)으로 고침.
+- 세 파일 다 `go test -race`로 데이터 레이스 없음 확인. 컴파트먼트당 리소스 개수가 원래 적어서(수십 개 수준) 워커풀/세마포어 같은 동시성 제한은 안 둠 — 전부 한 번에 fan-out.
+- **실측**: `bumsik`(DB System 10개, MEM/DISK/NODE/ROLE 다 채운 상태) 약 1.2초, `WYD-POC`(Instance 13개, IP/스토리지/메트릭 다 채운 상태) 약 1.2초.
+
 ## v0.1.12
 
 ### 커서(선택된 행)에서 EDITION 색상이 안 보이는 문제 → 파스텔로 정착

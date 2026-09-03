@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"sync"
 
 	"github.com/oracle/oci-go-sdk/v65/core"
 )
@@ -19,6 +20,14 @@ type instanceIPs struct {
 // instances with multiple VNICs (where picking the right one needs the
 // IsPrimary flag, which only GetVnic exposes). A failed GetVnic call just
 // leaves that instance's IPs blank rather than failing the whole listing.
+//
+// Each instance's GetVnic call(s) run in their own goroutine — a
+// compartment with many instances used to pay for this one round trip at a
+// time. Results funnel through a channel into a single map-writing
+// goroutine rather than writing the shared map from every goroutine
+// directly, since a plain Go map isn't safe for concurrent writes even to
+// different keys (unlike db_system.go's List, which writes to a
+// pre-sized slice by index instead).
 func fetchInstanceIPs(ctx context.Context, computeClient core.ComputeClient, vnClient core.VirtualNetworkClient, compartmentID string) map[string]instanceIPs {
 	byInstance := make(map[string][]string) // instanceID -> attached VNIC IDs
 	page := ""
@@ -43,28 +52,45 @@ func fetchInstanceIPs(ctx context.Context, computeClient core.ComputeClient, vnC
 		page = *resp.OpcNextPage
 	}
 
-	out := make(map[string]instanceIPs, len(byInstance))
+	type result struct {
+		instanceID string
+		ips        instanceIPs
+	}
+	results := make(chan result, len(byInstance))
+	var wg sync.WaitGroup
 	for instanceID, vnicIDs := range byInstance {
-		var fallback *instanceIPs
-		for _, vnicID := range vnicIDs {
-			vnicID := vnicID
-			resp, err := vnClient.GetVnic(ctx, core.GetVnicRequest{VnicId: &vnicID})
-			if err != nil {
-				continue
+		wg.Add(1)
+		go func(instanceID string, vnicIDs []string) {
+			defer wg.Done()
+			var fallback *instanceIPs
+			for _, vnicID := range vnicIDs {
+				vnicID := vnicID
+				resp, err := vnClient.GetVnic(ctx, core.GetVnicRequest{VnicId: &vnicID})
+				if err != nil {
+					continue
+				}
+				ips := instanceIPs{Public: deref(resp.PublicIp), Private: deref(resp.PrivateIp)}
+				if resp.IsPrimary != nil && *resp.IsPrimary {
+					results <- result{instanceID, ips}
+					return
+				}
+				if fallback == nil {
+					fallback = &ips
+				}
 			}
-			ips := instanceIPs{Public: deref(resp.PublicIp), Private: deref(resp.PrivateIp)}
-			if resp.IsPrimary != nil && *resp.IsPrimary {
-				out[instanceID] = ips
-				fallback = nil
-				break
+			if fallback != nil {
+				results <- result{instanceID, *fallback}
 			}
-			if fallback == nil {
-				fallback = &ips
-			}
-		}
-		if fallback != nil {
-			out[instanceID] = *fallback
-		}
+		}(instanceID, vnicIDs)
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	out := make(map[string]instanceIPs, len(byInstance))
+	for r := range results {
+		out[r.instanceID] = r.ips
 	}
 	return out
 }

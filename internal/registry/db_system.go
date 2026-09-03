@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/oracle/oci-go-sdk/v65/database"
 	"toci/internal/clients"
@@ -161,34 +162,51 @@ func (r *DbSystemResource) List(ctx context.Context, s Scope, page string) ([]Ro
 		}
 	}
 
-	rows := make([]Row, 0, len(resp.Items))
+	items := make([]database.DbSystemSummary, 0, len(resp.Items))
 	for _, d := range resp.Items {
-		if allow != nil && !allow[deref(d.SubnetId)] {
-			continue
+		if allow == nil || allow[deref(d.SubnetId)] {
+			items = append(items, d)
 		}
-		// ListDbSystems never populates MemorySizeInGBs (confirmed against a
-		// real DB system: List returns nil, Get returns the real value) —
-		// only GetDbSystem does. DB systems per compartment are few (unlike
-		// instances), so one Get call per row here is cheap, the same
-		// tradeoff instance_ip.go already accepts for GetVnic.
-		if d.MemorySizeInGBs == nil {
-			if full, err := client.GetDbSystem(ctx, database.GetDbSystemRequest{DbSystemId: d.Id}); err == nil {
-				d.MemorySizeInGBs = full.MemorySizeInGBs
-			}
-		}
-		nodeStates := fetchDbNodeStates(ctx, client, s.CompartmentID, d.Id, nil)
-		var role string
-		if len(nodeStates) <= 1 {
-			// RAC (len > 1) wins in the ROLE column regardless, so skip the
-			// extra ListDatabases+ListDataGuardAssociations calls for it.
-			role = fetchDbSystemRole(ctx, client, s.CompartmentID, deref(d.Id), s.Region)
-		}
-		rows = append(rows, Row{ID: deref(d.Id), Name: deref(d.DisplayName), TimeCreated: timeOf(d.TimeCreated), Raw: DbSystemRow{
-			DbSystemSummary: d,
-			NodeStates:      nodeStates,
-			Role:            role,
-		}})
 	}
+
+	// Each row needs up to 4 sequential calls (GetDbSystem, ListDbNodes,
+	// ListDatabases, ListDataGuardAssociations) to fully enrich — done
+	// one row at a time, a compartment with several DB systems (e.g. 10)
+	// visibly took several seconds. DB systems per compartment are few, so
+	// fanning every row out to its own goroutine (writing to its own
+	// rows[i], no shared state to lock) turns that into one row's worth of
+	// latency instead of N rows' worth. The OCI SDK's generated clients
+	// wrap a shared http.Client and carry no per-call mutable state, so
+	// they're safe to use concurrently like this.
+	rows := make([]Row, len(items))
+	var wg sync.WaitGroup
+	for i, d := range items {
+		wg.Add(1)
+		go func(i int, d database.DbSystemSummary) {
+			defer wg.Done()
+			// ListDbSystems never populates MemorySizeInGBs (confirmed
+			// against a real DB system: List returns nil, Get returns the
+			// real value) — only GetDbSystem does.
+			if d.MemorySizeInGBs == nil {
+				if full, err := client.GetDbSystem(ctx, database.GetDbSystemRequest{DbSystemId: d.Id}); err == nil {
+					d.MemorySizeInGBs = full.MemorySizeInGBs
+				}
+			}
+			nodeStates := fetchDbNodeStates(ctx, client, s.CompartmentID, d.Id, nil)
+			var role string
+			if len(nodeStates) <= 1 {
+				// RAC (len > 1) wins in the ROLE column regardless, so skip
+				// the extra ListDatabases+ListDataGuardAssociations calls.
+				role = fetchDbSystemRole(ctx, client, s.CompartmentID, deref(d.Id), s.Region)
+			}
+			rows[i] = Row{ID: deref(d.Id), Name: deref(d.DisplayName), TimeCreated: timeOf(d.TimeCreated), Raw: DbSystemRow{
+				DbSystemSummary: d,
+				NodeStates:      nodeStates,
+				Role:            role,
+			}}
+		}(i, d)
+	}
+	wg.Wait()
 
 	next := ""
 	if resp.OpcNextPage != nil {

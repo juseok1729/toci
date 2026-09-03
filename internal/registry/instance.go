@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"toci/internal/clients"
@@ -134,26 +135,43 @@ func (r *InstanceResource) List(ctx context.Context, s Scope, page string) ([]Ro
 		return nil, "", err
 	}
 
-	var metrics map[string]instanceMetrics
-	if monClient, err := r.factory.Monitoring(s.Region); err == nil {
-		metrics = fetchInstanceMetrics(ctx, monClient, s.CompartmentID)
-	}
-
 	vnClient, err := r.factory.VirtualNetwork(s.Region)
 	if err != nil {
 		return nil, "", err
 	}
 
-	ips := fetchInstanceIPs(ctx, client, vnClient, s.CompartmentID)
-
-	var storage map[string]int64
-	if bsClient, err := r.factory.Blockstorage(s.Region); err == nil {
-		ads := make([]string, 0, len(resp.Items))
-		for _, i := range resp.Items {
-			ads = append(ads, deref(i.AvailabilityDomain))
+	// Metrics, IPs, and storage are three independent lookups over the same
+	// compartment (each already best-effort — a failure just leaves that
+	// data blank rather than failing the listing) — fetched concurrently
+	// instead of one after another.
+	var (
+		metrics map[string]instanceMetrics
+		ips     map[string]instanceIPs
+		storage map[string]int64
+		wg      sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		if monClient, err := r.factory.Monitoring(s.Region); err == nil {
+			metrics = fetchInstanceMetrics(ctx, monClient, s.CompartmentID)
 		}
-		storage = fetchInstanceStorage(ctx, client, bsClient, s.CompartmentID, ads)
-	}
+	}()
+	go func() {
+		defer wg.Done()
+		ips = fetchInstanceIPs(ctx, client, vnClient, s.CompartmentID)
+	}()
+	go func() {
+		defer wg.Done()
+		if bsClient, err := r.factory.Blockstorage(s.Region); err == nil {
+			ads := make([]string, 0, len(resp.Items))
+			for _, i := range resp.Items {
+				ads = append(ads, deref(i.AvailabilityDomain))
+			}
+			storage = fetchInstanceStorage(ctx, client, bsClient, s.CompartmentID, ads)
+		}
+	}()
+	wg.Wait()
 
 	var allow map[string]bool
 	if s.VcnID != "" {

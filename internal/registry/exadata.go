@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/oracle/oci-go-sdk/v65/database"
 	"toci/internal/clients"
@@ -101,16 +102,30 @@ func (r *CloudVmClusterResource) List(ctx context.Context, s Scope, page string)
 		}
 	}
 
-	rows := make([]Row, 0, len(resp.Items))
+	items := make([]database.CloudVmClusterSummary, 0, len(resp.Items))
 	for _, c := range resp.Items {
-		if allow != nil && !allow[deref(c.SubnetId)] {
-			continue
+		if allow == nil || allow[deref(c.SubnetId)] {
+			items = append(items, c)
 		}
-		rows = append(rows, Row{ID: deref(c.Id), Name: deref(c.DisplayName), TimeCreated: timeOf(c.TimeCreated), Raw: CloudVmClusterRow{
-			CloudVmClusterSummary: c,
-			NodeStates:            fetchDbNodeStates(ctx, client, s.CompartmentID, nil, c.Id),
-		}})
 	}
+
+	// Same tradeoff as DbSystemResource.List: fetchDbNodeStates is one call
+	// per row, so fan every row out to its own goroutine (each writes only
+	// its own rows[i], no shared state to lock) instead of paying for it
+	// one row at a time.
+	rows := make([]Row, len(items))
+	var wg sync.WaitGroup
+	for i, c := range items {
+		wg.Add(1)
+		go func(i int, c database.CloudVmClusterSummary) {
+			defer wg.Done()
+			rows[i] = Row{ID: deref(c.Id), Name: deref(c.DisplayName), TimeCreated: timeOf(c.TimeCreated), Raw: CloudVmClusterRow{
+				CloudVmClusterSummary: c,
+				NodeStates:            fetchDbNodeStates(ctx, client, s.CompartmentID, nil, c.Id),
+			}}
+		}(i, c)
+	}
+	wg.Wait()
 
 	next := ""
 	if resp.OpcNextPage != nil {
