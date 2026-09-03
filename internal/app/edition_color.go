@@ -25,11 +25,19 @@ var (
 	// as state_color.go's stateText*Selected styles: without it,
 	// style.Render's own trailing reset would punch a default-background
 	// hole in the selected row right where EDITION sits.
-	editionColorSE2Selected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00E5FF")).Background(lipgloss.Color(ociSelBg))
-	editionColorEESelected    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#2979FF")).Background(lipgloss.Color(ociSelBg))
-	editionColorEEHPSelected  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#AA00FF")).Background(lipgloss.Color(ociSelBg))
-	editionColorEEEPSelected  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF1493")).Background(lipgloss.Color(ociSelBg))
-	editionColorEEDevSelected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00E676")).Background(lipgloss.Color(ociSelBg))
+	//
+	// A solid black backdrop, then same-hue-but-darker, were both tried
+	// here first — see git history — before landing on pastel/light tints
+	// of each tier's hue: high lightness reads clearly against ociSelBg's
+	// medium-tone green by contrast, without the vivid non-selected colors
+	// competing with it in saturation. EE-DEV's tint happens to equal
+	// ociHighlt (the app's gold accent), so it reuses that constant instead
+	// of duplicating the hex.
+	editionColorSE2Selected   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7DF9FF")).Background(lipgloss.Color(ociSelBg))
+	editionColorEESelected    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#AFD7FF")).Background(lipgloss.Color(ociSelBg))
+	editionColorEEHPSelected  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E2C4FF")).Background(lipgloss.Color(ociSelBg))
+	editionColorEEEPSelected  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFB8DE")).Background(lipgloss.Color(ociSelBg))
+	editionColorEEDevSelected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ociHighlt)).Background(lipgloss.Color(ociSelBg))
 )
 
 // editionStyleFor maps a DB System EDITION cell's already-abbreviated text
