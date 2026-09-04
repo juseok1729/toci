@@ -6,9 +6,17 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"toci/internal/clients"
 )
+
+// computeInstanceMonitoringPlugin is the exact Oracle Cloud Agent plugin
+// name for the "Compute Instance Monitoring" plugin — the one that
+// publishes CpuUtilization/MemoryUtilization/etc. to the oci_computeagent
+// namespace (see instance_metrics.go). Must match the plugin name OCI's
+// own API expects verbatim; there's no enum for it, just this string.
+const computeInstanceMonitoringPlugin = "Compute Instance Monitoring"
 
 type InstanceResource struct {
 	factory *clients.Factory
@@ -210,12 +218,39 @@ func (r *InstanceResource) Actions() []ActionSpec {
 	return []ActionSpec{
 		{Key: "start", Label: "Start"},
 		{Key: "stop", Label: "Stop (graceful)"},
+		{Key: "enable-monitoring", Label: "Enable Monitoring"},
 	}
 }
 
 func (r *InstanceResource) RunAction(ctx context.Context, s Scope, key, id string) error {
 	client, err := r.factory.Compute(s.Region)
 	if err != nil {
+		return err
+	}
+
+	if key == "enable-monitoring" {
+		// isMonitoringDisabled=false unblocks the whole monitoring
+		// category (OCI docs: "if isMonitoringDisabled is true, all
+		// monitoring plugins are disabled regardless of per-plugin
+		// config") and the pluginsConfig entry enables this specific
+		// plugin — needed both together to guarantee it turns on
+		// regardless of the instance's current state. Omitting other
+		// plugins from pluginsConfig leaves their own state untouched
+		// (OCI updates plugins individually, not as a full-list replace).
+		_, err = client.UpdateInstance(ctx, core.UpdateInstanceRequest{
+			InstanceId: &id,
+			UpdateInstanceDetails: core.UpdateInstanceDetails{
+				AgentConfig: &core.UpdateInstanceAgentConfigDetails{
+					IsMonitoringDisabled: common.Bool(false),
+					PluginsConfig: []core.InstanceAgentPluginConfigDetails{
+						{
+							Name:         common.String(computeInstanceMonitoringPlugin),
+							DesiredState: core.InstanceAgentPluginConfigDetailsDesiredStateEnabled,
+						},
+					},
+				},
+			},
+		})
 		return err
 	}
 
