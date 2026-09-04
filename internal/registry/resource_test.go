@@ -76,6 +76,22 @@ func TestRegionFromOCID(t *testing.T) {
 	}
 }
 
+func TestCidrRange(t *testing.T) {
+	cases := map[string]string{
+		"10.0.0.0/24":    "10.0.0.0 - 10.0.0.255 (254 usable)",
+		"10.0.0.0/16":    "10.0.0.0 - 10.0.255.255 (65534 usable)",
+		"10.0.0.0/31":    "10.0.0.0 - 10.0.0.1 (2 usable)",
+		"192.168.1.5/32": "192.168.1.5 - 192.168.1.5 (1 usable)",
+		"":               "",
+		"not-a-cidr":     "",
+	}
+	for in, want := range cases {
+		if got := cidrRange(in); got != want {
+			t.Errorf("cidrRange(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestDbEditionAbbrev(t *testing.T) {
 	cases := map[database.DbSystemSummaryDatabaseEditionEnum]string{
 		database.DbSystemSummaryDatabaseEditionStandardEdition:                     "SE2",

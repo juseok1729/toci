@@ -29,8 +29,8 @@ func (r *SubnetResource) Columns() []Column {
 		{Header: "CIDR", Width: 18, Get: func(row Row) string {
 			return deref(row.Raw.(core.Subnet).CidrBlock)
 		}},
-		{Header: "AD", Width: 20, Get: func(row Row) string {
-			return deref(row.Raw.(core.Subnet).AvailabilityDomain)
+		{Header: "IP RANGE", Width: 46, Get: func(row Row) string {
+			return cidrRange(deref(row.Raw.(core.Subnet).CidrBlock))
 		}},
 	}
 }

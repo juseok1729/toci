@@ -4,6 +4,7 @@ package registry
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -89,6 +90,33 @@ func deref(s *string) string {
 
 func itoa(n int) string {
 	return strconv.Itoa(n)
+}
+
+// cidrRange formats a CIDR block's address range plus its usable host count,
+// e.g. "10.0.0.0/24" -> "10.0.0.0 - 10.0.0.255 (254 usable)". Usable count
+// follows standard IPv4 convention: total addresses minus network and
+// broadcast, except /31 (2, RFC 3021 point-to-point) and /32 (1, host route).
+// Returns "" if cidr is empty or invalid.
+func cidrRange(cidr string) string {
+	if cidr == "" {
+		return ""
+	}
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+	first := ipnet.IP
+	last := make(net.IP, len(first))
+	for i := range first {
+		last[i] = first[i] | ^ipnet.Mask[i]
+	}
+	ones, bits := ipnet.Mask.Size()
+	total := uint64(1) << uint(bits-ones)
+	usable := total
+	if ones < bits-1 {
+		usable = total - 2
+	}
+	return first.String() + " - " + last.String() + " (" + strconv.FormatUint(usable, 10) + " usable)"
 }
 
 // stateLabel renders an OCI LifecycleState enum (e.g. "RUNNING",

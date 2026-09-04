@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/sahilm/fuzzy"
 	"gopkg.in/yaml.v3"
 
@@ -73,6 +75,13 @@ type rowsMsg struct {
 }
 
 type rootNameMsg struct{ name string }
+
+// vcnNamesMsg carries the VcnID->DisplayName lookup fetchVcnNames builds,
+// for labeling the "g" grouping column on the Subnet view.
+type vcnNamesMsg struct {
+	names map[string]string
+	err   error
+}
 
 type regionsMsg struct {
 	items []pickerItem
@@ -199,6 +208,15 @@ type Model struct {
 	// ("b" key) — some users just don't want blinking rows, independent of
 	// blinkOn's animation timer.
 	blinkEnabled bool
+
+	// groupByVcn toggles ("g" key) grouping the Subnet list by VCN — only
+	// meaningful on the Subnet view with no VCN filter active (see
+	// groupingActive); a VCN-filtered Subnet list is already one VCN.
+	groupByVcn bool
+	// vcnNames caches VcnID->DisplayName for the current compartment,
+	// fetched lazily by fetchVcnNames the first time groupByVcn turns on.
+	// Invalidated (set nil) on every compartment change.
+	vcnNames map[string]string
 }
 
 func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, profile, version string) Model {
@@ -429,7 +447,7 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 // refreshTable rebuilds m.table from the resource's current columns and the
 // given rows, preserving the table's on-screen size.
 func (m *Model) refreshTable(rows []registry.Row) {
-	cols := m.current().Columns()
+	cols := m.displayColumns()
 	trows := make([]table.Row, len(rows))
 	colValues := make([][]string, len(cols))
 	for i, row := range rows {
@@ -459,6 +477,12 @@ func (m *Model) refreshTable(rows []registry.Row) {
 
 func (m *Model) setDisplayRows() {
 	m.displayRows = applyFilter(m.rows, m.filterQuery)
+	if m.groupingActive() {
+		names := m.vcnNames
+		sort.SliceStable(m.displayRows, func(i, j int) bool {
+			return vcnLabel(m.displayRows[i], names) < vcnLabel(m.displayRows[j], names)
+		})
+	}
 	m.refreshTable(m.displayRows)
 }
 
@@ -507,7 +531,7 @@ func (m *Model) relayout() {
 // the terminal) shouldn't jump the selection back to the top row the way a
 // real row-set change (filter, reload) should.
 func (m *Model) relayoutTableColumns() {
-	cols := m.current().Columns()
+	cols := m.displayColumns()
 	colValues := make([][]string, len(cols))
 	for _, row := range m.displayRows {
 		for j, c := range cols {
@@ -537,6 +561,62 @@ var vcnScopedResourceKeys = map[string]bool{
 // active VCN filter (scope.VcnID) instead of clearing it.
 func isVcnDependent(key string) bool {
 	return vcnScopedResourceKeys[key]
+}
+
+// groupingActive reports whether the "g" grouping column/sort should apply:
+// only the Subnet view, and only with no VCN filter (a filtered list is
+// already scoped to a single VCN, so grouping it would be a no-op).
+func (m Model) groupingActive() bool {
+	return m.groupByVcn && m.current().Key() == "subnet" && m.scope.VcnID == ""
+}
+
+// displayColumns is m.current().Columns(), with the synthetic "VCN" grouping
+// column prepended when groupingActive — the single source of truth for
+// table shape, so refreshTable and relayoutTableColumns never disagree on
+// column count against the row cells already sitting in m.table (that
+// mismatch panics inside bubbles/table).
+func (m *Model) displayColumns() []registry.Column {
+	cols := m.current().Columns()
+	if !m.groupingActive() {
+		return cols
+	}
+	names := m.vcnNames
+	vcnCol := registry.Column{Header: "VCN", Width: 24, Get: func(row registry.Row) string {
+		return vcnLabel(row, names)
+	}}
+	return append([]registry.Column{vcnCol}, cols...)
+}
+
+// vcnLabel returns a subnet row's VCN name for the grouping column/sort,
+// falling back to the VCN's OCID when fetchVcnNames hasn't resolved it yet.
+func vcnLabel(row registry.Row, names map[string]string) string {
+	sn, ok := row.Raw.(core.Subnet)
+	if !ok || sn.VcnId == nil {
+		return ""
+	}
+	if name := names[*sn.VcnId]; name != "" {
+		return name
+	}
+	return *sn.VcnId
+}
+
+// fetchVcnNames lists every VCN in the current compartment and returns a
+// VcnID->DisplayName map, for vcnLabel to use once loaded.
+func (m Model) fetchVcnNames() tea.Cmd {
+	factory := m.factory
+	scope := m.scope
+	scope.VcnID = ""
+	return func() tea.Msg {
+		rows, err := fetchAll(context.Background(), registry.NewVcnResource(factory), scope)
+		if err != nil {
+			return vcnNamesMsg{err: err}
+		}
+		names := make(map[string]string, len(rows))
+		for _, row := range rows {
+			names[row.ID] = row.Name
+		}
+		return vcnNamesMsg{names: names}
+	}
 }
 
 func (m *Model) switchResource(idx int) tea.Cmd {
@@ -616,6 +696,7 @@ func (m *Model) switchToRootCompartments() tea.Cmd {
 	}
 	m.compPath = m.compPath[:1]
 	m.scope.CompartmentID = m.compPath[0].ID
+	m.vcnNames = nil
 	m.relayout()
 	return m.switchResource(idx)
 }
@@ -623,6 +704,7 @@ func (m *Model) switchToRootCompartments() tea.Cmd {
 func (m *Model) enterCompartment(id, name string) tea.Cmd {
 	m.compPath = append(m.compPath, crumb{ID: id, Name: name})
 	m.scope.CompartmentID = id
+	m.vcnNames = nil
 	m.rows = nil
 	m.filterQuery = ""
 	m.setDisplayRows()
@@ -639,6 +721,7 @@ func (m *Model) exitCompartment() tea.Cmd {
 	}
 	m.compPath = m.compPath[:len(m.compPath)-1]
 	m.scope.CompartmentID = m.compPath[len(m.compPath)-1].ID
+	m.vcnNames = nil
 	m.rows = nil
 	m.filterQuery = ""
 	m.setDisplayRows()
@@ -767,6 +850,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.compPath[0].Name = msg.name
 			m.relayout()
 		}
+		return m, nil
+
+	case vcnNamesMsg:
+		if msg.err != nil {
+			m.statusMsg = "vcn names failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.vcnNames = msg.names
+		m.setDisplayRows()
 		return m, nil
 
 	case regionsMsg:
@@ -1076,6 +1168,23 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "blink: off"
 		}
 		return m, nil
+
+	case "g":
+		if m.current().Key() != "subnet" || m.scope.VcnID != "" {
+			return m, nil
+		}
+		m.groupByVcn = !m.groupByVcn
+		var cmd tea.Cmd
+		if m.groupByVcn {
+			m.statusMsg = "group by vcn: on"
+			if m.vcnNames == nil {
+				cmd = m.fetchVcnNames()
+			}
+		} else {
+			m.statusMsg = "group by vcn: off"
+		}
+		m.setDisplayRows()
+		return m, cmd
 
 	case "e":
 		path := exportFilename(m.current().Key(), time.Now())
@@ -1506,6 +1615,13 @@ func (m Model) helpEntries() []helpEntry {
 		add("b", "blink: on")
 	} else {
 		add("b", "blink: off")
+	}
+	if m.current().Key() == "subnet" && m.scope.VcnID == "" {
+		if m.groupByVcn {
+			add("g", "group by vcn: on")
+		} else {
+			add("g", "group by vcn: off")
+		}
 	}
 	add("e", "export csv")
 	if m.vcnFilterName != "" {
