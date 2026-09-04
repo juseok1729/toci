@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os/exec"
-	"sort"
 	"strings"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/sahilm/fuzzy"
 	"gopkg.in/yaml.v3"
 
@@ -476,13 +474,11 @@ func (m *Model) refreshTable(rows []registry.Row) {
 }
 
 func (m *Model) setDisplayRows() {
-	m.displayRows = applyFilter(m.rows, m.filterQuery)
+	rows := applyFilter(m.rows, m.filterQuery)
 	if m.groupingActive() {
-		names := m.vcnNames
-		sort.SliceStable(m.displayRows, func(i, j int) bool {
-			return vcnLabel(m.displayRows[i], names) < vcnLabel(m.displayRows[j], names)
-		})
+		rows = groupRowsByVcn(rows, m.vcnNames)
 	}
+	m.displayRows = rows
 	m.refreshTable(m.displayRows)
 }
 
@@ -570,34 +566,17 @@ func (m Model) groupingActive() bool {
 	return m.groupByVcn && m.current().Key() == "subnet" && m.scope.VcnID == ""
 }
 
-// displayColumns is m.current().Columns(), with the synthetic "VCN" grouping
-// column prepended when groupingActive — the single source of truth for
-// table shape, so refreshTable and relayoutTableColumns never disagree on
-// column count against the row cells already sitting in m.table (that
-// mismatch panics inside bubbles/table).
+// displayColumns is m.current().Columns(), tree-decorated (see vcn_tree.go)
+// when groupingActive — the single source of truth for table shape, so
+// refreshTable and relayoutTableColumns never disagree on column count
+// against the row cells already sitting in m.table (that mismatch panics
+// inside bubbles/table).
 func (m *Model) displayColumns() []registry.Column {
 	cols := m.current().Columns()
 	if !m.groupingActive() {
 		return cols
 	}
-	names := m.vcnNames
-	vcnCol := registry.Column{Header: "VCN", Width: 24, Get: func(row registry.Row) string {
-		return vcnLabel(row, names)
-	}}
-	return append([]registry.Column{vcnCol}, cols...)
-}
-
-// vcnLabel returns a subnet row's VCN name for the grouping column/sort,
-// falling back to the VCN's OCID when fetchVcnNames hasn't resolved it yet.
-func vcnLabel(row registry.Row, names map[string]string) string {
-	sn, ok := row.Raw.(core.Subnet)
-	if !ok || sn.VcnId == nil {
-		return ""
-	}
-	if name := names[*sn.VcnId]; name != "" {
-		return name
-	}
-	return *sn.VcnId
+	return treeColumns(cols, treeGlyphs(m.displayRows))
 }
 
 // fetchVcnNames lists every VCN in the current compartment and returns a
@@ -1188,11 +1167,15 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "e":
 		path := exportFilename(m.current().Key(), time.Now())
-		if err := exportCSV(path, m.current().Columns(), m.displayRows); err != nil {
+		rows := m.displayRows
+		if m.groupingActive() {
+			rows = filterOutGroupHeaders(rows)
+		}
+		if err := exportCSV(path, m.current().Columns(), rows); err != nil {
 			m.statusMsg = "export failed: " + err.Error()
 			return m, nil
 		}
-		m.statusMsg = fmt.Sprintf("exported %d rows to %s", len(m.displayRows), path)
+		m.statusMsg = fmt.Sprintf("exported %d rows to %s", len(rows), path)
 		return m, nil
 
 	case "/":
@@ -1289,6 +1272,9 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		row, ok := m.selected()
 		if !ok {
+			return m, nil
+		}
+		if _, isGroupHeader := row.Raw.(vcnGroupHeader); isGroupHeader {
 			return m, nil
 		}
 		m.mode = modeDetail
