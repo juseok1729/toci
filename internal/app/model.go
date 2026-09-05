@@ -153,6 +153,10 @@ type Model struct {
 	// header and used to know what Esc should back out of.
 	vcnFilterName string
 
+	// drgFilterName is the DRG-attachment analog of vcnFilterName — non-empty
+	// while scope.DrgID is set via "i"/Enter on a DRG row.
+	drgFilterName string
+
 	// detailExport holds what "e" should export while in modeDetail — set
 	// by "v" (security rules table), cleared whenever Enter opens the
 	// plain YAML detail view instead, since that one has nothing sensible
@@ -559,6 +563,19 @@ func isVcnDependent(key string) bool {
 	return vcnScopedResourceKeys[key]
 }
 
+// drgScopedResourceKeys is the DRG analog of vcnScopedResourceKeys — just
+// DrgAttachments, since a DRG attachment isn't itself "inside" any other
+// VCN-scoped resource the way Subnet/Instance/etc. are inside a VCN.
+var drgScopedResourceKeys = map[string]bool{
+	"drg": true, "drg-attachment": true, "drg-route-table": true, "drg-route-distribution": true,
+}
+
+// isDrgDependent reports whether switching to this resource should keep an
+// active DRG filter (scope.DrgID) instead of clearing it.
+func isDrgDependent(key string) bool {
+	return drgScopedResourceKeys[key]
+}
+
 // groupingActive reports whether the "g" grouping column/sort should apply:
 // only the Subnet view, and only with no VCN filter (a filtered list is
 // already scoped to a single VCN, so grouping it would be a no-op).
@@ -598,7 +615,26 @@ func (m Model) fetchVcnNames() tea.Cmd {
 	}
 }
 
+// drgIDRequiredResourceKeys are the DRG-scoped resources whose underlying
+// OCI API takes DrgId as a *mandatory* parameter (unlike the VCN-scoped
+// resources, e.g. Subnet, which work fine unfiltered) — so unlike every
+// other resource in the app, they simply cannot be listed without a DRG
+// already picked. switchResource redirects to the DRG list instead of
+// loading these with an empty DrgID (which would just 404).
+var drgIDRequiredResourceKeys = map[string]bool{
+	"drg-route-table": true, "drg-route-distribution": true,
+}
+
 func (m *Model) switchResource(idx int) tea.Cmd {
+	if drgIDRequiredResourceKeys[m.resources[idx].Key()] && m.scope.DrgID == "" {
+		m.statusMsg = "select a DRG first (\"i\" or Enter on a DRG row)"
+		for i, r := range m.resources {
+			if r.Key() == "drg" {
+				idx = i
+				break
+			}
+		}
+	}
 	m.resIdx = idx
 	m.rows = nil
 	m.filterQuery = ""
@@ -613,6 +649,12 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 		m.scope.VcnID = ""
 		m.vcnFilterName = ""
 	}
+	// Same idea for the DRG filter (DrgAttachments) — an independent axis
+	// from the VCN filter above, so it's checked and cleared separately.
+	if !isDrgDependent(m.resources[idx].Key()) {
+		m.scope.DrgID = ""
+		m.drgFilterName = ""
+	}
 	m.setDisplayRows()
 	return m.load()
 }
@@ -625,6 +667,14 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 func (m *Model) selectVcnFilter(id, name string) {
 	m.scope.VcnID = id
 	m.vcnFilterName = name
+	m.openResourceSearch()
+}
+
+// selectDrgFilter is selectVcnFilter's DRG analog — triggered by "i" or
+// Enter on a DRG row, scopes DrgAttachments to this DRG.
+func (m *Model) selectDrgFilter(id, name string) {
+	m.scope.DrgID = id
+	m.drgFilterName = name
 	m.openResourceSearch()
 }
 
@@ -653,6 +703,24 @@ func (m *Model) exitVcn() tea.Cmd {
 	}
 	m.scope.VcnID = ""
 	m.vcnFilterName = ""
+	return m.switchResource(idx)
+}
+
+// exitDrg is exitVcn's DRG analog — clears the DRG scope and returns to the
+// DRG list.
+func (m *Model) exitDrg() tea.Cmd {
+	idx := -1
+	for i, r := range m.resources {
+		if r.Key() == "drg" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	m.scope.DrgID = ""
+	m.drgFilterName = ""
 	return m.switchResource(idx)
 }
 
@@ -1229,14 +1297,19 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.fetchBastions()
 
 	case "i":
-		if m.current().Key() != "vcn" {
+		key := m.current().Key()
+		if key != "vcn" && key != "drg" {
 			return m, nil
 		}
 		row, ok := m.selected()
 		if !ok {
 			return m, nil
 		}
-		m.selectVcnFilter(row.ID, row.Name)
+		if key == "vcn" {
+			m.selectVcnFilter(row.ID, row.Name)
+		} else {
+			m.selectDrgFilter(row.ID, row.Name)
+		}
 		return m, nil
 
 	case "v":
@@ -1293,6 +1366,8 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.enterCompartment(row.ID, row.Name)
 		case "vcn":
 			m.selectVcnFilter(row.ID, row.Name)
+		case "drg":
+			m.selectDrgFilter(row.ID, row.Name)
 		}
 		return m, nil
 
@@ -1304,6 +1379,9 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.scope.VcnID != "" {
 			return m, m.exitVcn()
+		}
+		if m.scope.DrgID != "" {
+			return m, m.exitDrg()
 		}
 		if cmd := m.exitCompartment(); cmd != nil {
 			return m, cmd
@@ -1338,6 +1416,9 @@ func (m Model) View() string {
 	compartment := breadcrumbLabel(m.compPath)
 	if m.vcnFilterName != "" {
 		compartment += " › " + m.vcnFilterName
+	}
+	if m.drgFilterName != "" {
+		compartment += " › " + m.drgFilterName
 	}
 	b.WriteString(pathStyle.Render("  Compartment: "))
 	b.WriteString(headerValueStyle.Render(compartment))
@@ -1630,10 +1711,13 @@ func (m Model) helpEntries() []helpEntry {
 	if m.current().Key() == "vcn" {
 		add("enter / i", "filter by this VCN")
 	}
+	if m.current().Key() == "drg" {
+		add("enter / i", "filter by this DRG")
+	}
 	if m.current().Key() == "security-list" {
 		add("v", "view rules")
 	}
-	if len(m.compPath) > 1 || m.vcnFilterName != "" {
+	if len(m.compPath) > 1 || m.vcnFilterName != "" || m.drgFilterName != "" {
 		add("esc", "up")
 	}
 	add("q", "quit")

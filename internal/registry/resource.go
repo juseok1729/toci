@@ -14,11 +14,13 @@ import (
 
 // Scope is the (region, compartment) pair a listing is evaluated against.
 // VcnID is an optional extra filter: when set, InstanceResource.List only
-// returns instances with a VNIC in that VCN.
+// returns instances with a VNIC in that VCN. DrgID is the same idea for
+// DrgAttachmentResource — the two filters are independent axes, not nested.
 type Scope struct {
 	Region        string
 	CompartmentID string
 	VcnID         string
+	DrgID         string
 }
 
 // Row is one line in a resource table. Raw holds the original SDK struct so
