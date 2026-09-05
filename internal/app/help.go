@@ -119,6 +119,14 @@ func spliceOverlay(baseLines, boxLines []string, x, y int) string {
 	if y < 0 {
 		y = 0
 	}
+	// A short base (e.g. the one-line "error: ..."/"loading..." states,
+	// nowhere near termHeight) used to make overlayCenter's row math land
+	// past the end of baseLines — every boxLine row hit the "continue"
+	// below and the whole popup silently vanished. Pad up front instead,
+	// so a box always has somewhere to land regardless of how tall base is.
+	for needed := y + len(boxLines); len(baseLines) < needed; {
+		baseLines = append(baseLines, "")
+	}
 	for i, boxLine := range boxLines {
 		row := y + i
 		if row < 0 || row >= len(baseLines) {
