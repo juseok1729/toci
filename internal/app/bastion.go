@@ -152,7 +152,21 @@ func buildSSHCommand(session oci_bastion.Session, privateKeyPath string) (string
 	if !ok {
 		return "", fmt.Errorf("session has no ssh command metadata")
 	}
-	return strings.ReplaceAll(cmd, "<privateKey>", privateKeyPath), nil
+	cmd = strings.ReplaceAll(cmd, "<privateKey>", privateKeyPath)
+	// OCI's bastion network path drops an idle relay connection well before
+	// the session's own TTL expires (independent timeout, not configurable
+	// on our side) — periodic keepalives on both ssh hops (the outer
+	// session and the ProxyCommand hop to the bastion, both start with
+	// "ssh -i" in the template OCI returns) stop that from happening.
+	cmd = strings.ReplaceAll(cmd, "ssh -i", "ssh -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i")
+	return cmd, nil
+}
+
+// buildDirectSSHCommand builds a plain ssh command straight to the
+// instance's private IP, bypassing the Bastion service — for networks
+// (e.g. on-prem over FastConnect) that already reach the VCN directly.
+func buildDirectSSHCommand(username, privateIP, privateKeyPath string) string {
+	return fmt.Sprintf("ssh -i %q %s@%s", privateKeyPath, username, privateIP)
 }
 
 func intPtr(n int) *int       { return &n }

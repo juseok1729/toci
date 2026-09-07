@@ -11,6 +11,7 @@ const (
 	pickerRegion pickerKind = iota
 	pickerAction
 	pickerBastion
+	pickerSSHMode
 	pickerResource
 )
 

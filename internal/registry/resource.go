@@ -68,9 +68,13 @@ type ActionSpec struct {
 // Actionable is implemented by resources that support write actions.
 // Kept separate from Resource so read-only resources (VCN, Subnet, ...)
 // aren't forced to stub it out.
+//
+// RunAction's string return is an optional result message to display
+// as-is (e.g. a status query's answer); return "" for actions that just
+// mutate state, where the caller's generic "<label> requested" suffices.
 type Actionable interface {
 	Actions() []ActionSpec
-	RunAction(ctx context.Context, s Scope, key, id string) error
+	RunAction(ctx context.Context, s Scope, key, id string) (string, error)
 }
 
 // timeOf converts an SDK timestamp pointer to a plain time.Time, zero if

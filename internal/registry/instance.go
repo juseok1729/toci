@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/oracle/oci-go-sdk/v65/common"
+	"github.com/oracle/oci-go-sdk/v65/computeinstanceagent"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"toci/internal/clients"
 )
@@ -17,6 +18,11 @@ import (
 // namespace (see instance_metrics.go). Must match the plugin name OCI's
 // own API expects verbatim; there's no enum for it, just this string.
 const computeInstanceMonitoringPlugin = "Compute Instance Monitoring"
+
+// bastionAgentPlugin is the exact Oracle Cloud Agent plugin name for the
+// "Bastion" plugin — required on the target instance before an OCI Bastion
+// managed-SSH session can be created against it.
+const bastionAgentPlugin = "Bastion"
 
 type InstanceResource struct {
 	factory *clients.Factory
@@ -219,13 +225,37 @@ func (r *InstanceResource) Actions() []ActionSpec {
 		{Key: "start", Label: "Start"},
 		{Key: "stop", Label: "Stop (graceful)"},
 		{Key: "enable-monitoring", Label: "Enable Monitoring"},
+		{Key: "enable-bastion-plugin", Label: "Enable Bastion Plugin"},
+		{Key: "plugin-status", Label: "Check Plugin Status"},
 	}
 }
 
-func (r *InstanceResource) RunAction(ctx context.Context, s Scope, key, id string) error {
+func (r *InstanceResource) RunAction(ctx context.Context, s Scope, key, id string) (string, error) {
+	if key == "plugin-status" {
+		client, err := r.factory.InstanceAgentPlugin(s.Region)
+		if err != nil {
+			return "", err
+		}
+		resp, err := client.ListInstanceAgentPlugins(ctx, computeinstanceagent.ListInstanceAgentPluginsRequest{
+			CompartmentId:   &s.CompartmentID,
+			InstanceagentId: &id,
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(resp.Items) == 0 {
+			return "no plugins reported (Oracle Cloud Agent may not be running)", nil
+		}
+		parts := make([]string, len(resp.Items))
+		for i, p := range resp.Items {
+			parts[i] = deref(p.Name) + ": " + string(p.Status)
+		}
+		return strings.Join(parts, "\n"), nil
+	}
+
 	client, err := r.factory.Compute(s.Region)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if key == "enable-monitoring" {
@@ -251,7 +281,28 @@ func (r *InstanceResource) RunAction(ctx context.Context, s Scope, key, id strin
 				},
 			},
 		})
-		return err
+		return "", err
+	}
+
+	if key == "enable-bastion-plugin" {
+		// Bastion isn't a monitoring or management plugin, so it's gated
+		// only by the master AreAllPluginsDisabled switch, not
+		// IsMonitoringDisabled/IsManagementDisabled.
+		_, err = client.UpdateInstance(ctx, core.UpdateInstanceRequest{
+			InstanceId: &id,
+			UpdateInstanceDetails: core.UpdateInstanceDetails{
+				AgentConfig: &core.UpdateInstanceAgentConfigDetails{
+					AreAllPluginsDisabled: common.Bool(false),
+					PluginsConfig: []core.InstanceAgentPluginConfigDetails{
+						{
+							Name:         common.String(bastionAgentPlugin),
+							DesiredState: core.InstanceAgentPluginConfigDetailsDesiredStateEnabled,
+						},
+					},
+				},
+			},
+		})
+		return "", err
 	}
 
 	var action core.InstanceActionActionEnum
@@ -261,12 +312,12 @@ func (r *InstanceResource) RunAction(ctx context.Context, s Scope, key, id strin
 	case "stop":
 		action = core.InstanceActionActionSoftstop
 	default:
-		return fmt.Errorf("unknown instance action %q", key)
+		return "", fmt.Errorf("unknown instance action %q", key)
 	}
 
 	_, err = client.InstanceAction(ctx, core.InstanceActionRequest{
 		InstanceId: &id,
 		Action:     action,
 	})
-	return err
+	return "", err
 }

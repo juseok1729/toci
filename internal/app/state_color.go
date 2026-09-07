@@ -162,6 +162,29 @@ func stateStyleFor(value string, selected bool) (lipgloss.Style, bool) {
 	}
 }
 
+// colorizePluginStatusText colors each "Name: STATUS" line of a
+// plugin-status action result (see instance.go's "plugin-status" action) —
+// RUNNING green, STOPPED red, anything else (NOT_SUPPORTED/INVALID) yellow.
+func colorizePluginStatusText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		idx := strings.LastIndex(line, ": ")
+		if idx < 0 {
+			continue
+		}
+		status := line[idx+2:]
+		style := stateTextWarn
+		switch status {
+		case "RUNNING":
+			style = stateTextGood
+		case "STOPPED":
+			style = stateTextBad
+		}
+		lines[i] = line[:idx+2] + style.Render(status)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // colorizeState highlights a named column (e.g. "STATE", or DB System's
 // "NODE") of an already-rendered resource table (the string bubbles'
 // table.Model.View() returns) — every resource kind, not just Instance,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/oracle/oci-go-sdk/v65/bastion"
 	"github.com/oracle/oci-go-sdk/v65/common"
+	"github.com/oracle/oci-go-sdk/v65/computeinstanceagent"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
 	"github.com/oracle/oci-go-sdk/v65/identity"
@@ -114,6 +115,17 @@ func (f *Factory) Monitoring(region string) (monitoring.MonitoringClient, error)
 		c, err := monitoring.NewMonitoringClientWithConfigurationProvider(f.provider)
 		if err != nil {
 			return monitoring.MonitoringClient{}, err
+		}
+		c.SetRegion(region)
+		return c, nil
+	})
+}
+
+func (f *Factory) InstanceAgentPlugin(region string) (computeinstanceagent.PluginClient, error) {
+	return get(f, region, "instanceagentplugin", func() (computeinstanceagent.PluginClient, error) {
+		c, err := computeinstanceagent.NewPluginClientWithConfigurationProvider(f.provider)
+		if err != nil {
+			return computeinstanceagent.PluginClient{}, err
 		}
 		c.SetRegion(region)
 		return c, nil

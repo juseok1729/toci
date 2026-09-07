@@ -3,8 +3,10 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -92,6 +94,7 @@ const recentRowWindow = 3 * 24 * time.Hour
 
 type actionResultMsg struct {
 	label string
+	msg   string
 	err   error
 }
 
@@ -134,6 +137,7 @@ type Model struct {
 	confirmInput  textinput.Model
 
 	sshBastionID string
+	sshDirect    bool
 	promptInput  textinput.Model
 
 	mode      mode
@@ -333,6 +337,60 @@ func (m Model) createSession(bastionID string, row registry.Row, username string
 		}
 		return sessionReadyMsg{sshCmd: sshCmd}
 	}
+}
+
+// createDirectSession skips the OCI Bastion service entirely and ssh's
+// straight to the instance's private IP with a local key — useful when the
+// caller's network already reaches the VCN directly (e.g. on-prem over
+// FastConnect) and a bastion hop isn't needed.
+func (m Model) createDirectSession(row registry.Row, username string) tea.Cmd {
+	factory := m.factory
+	scope := m.scope
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		_, privKeyPath, err := localSSHKeyPair()
+		if err != nil {
+			return sessionReadyMsg{err: err}
+		}
+		privateIP, err := instancePrivateIP(ctx, factory, scope, row.ID)
+		if err != nil {
+			return sessionReadyMsg{err: fmt.Errorf("resolve instance private IP: %w", err)}
+		}
+		return sessionReadyMsg{sshCmd: buildDirectSSHCommand(username, privateIP, privKeyPath)}
+	}
+}
+
+// openInHerdrPane runs sshCmd in a new pane split off the current one via
+// herdr's socket API (see `herdr pane --help`) — splitting alone only opens
+// an empty shell, so the pane id it returns has to be fed into a second
+// "pane run" call to actually type the ssh command into it.
+func openInHerdrPane(sshCmd string) error {
+	out, err := exec.Command("herdr", "pane", "split", "--current", "--direction", "down", "--no-focus").Output()
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Result struct {
+			Pane struct {
+				PaneID string `json:"pane_id"`
+			} `json:"pane"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return fmt.Errorf("parse herdr pane split response: %w", err)
+	}
+	paneID := resp.Result.Pane.PaneID
+	if paneID == "" {
+		return fmt.Errorf("herdr pane split: no pane id in response")
+	}
+	// "pane run" types its COMMAND... args, joined with spaces, into the
+	// pane's own interactive shell as one line — it doesn't exec them with
+	// argv preserved. So sshCmd must go in as a single already-complete
+	// shell command line, not split into ["sh", "-c", sshCmd]: that would
+	// hand the pane's shell "sh -c ssh -i ... -o ProxyCommand=\"...\" ...",
+	// where -c only grabs "ssh" and everything else is dropped.
+	return exec.Command("herdr", "pane", "run", paneID, sshCmd).Run()
 }
 
 // newTable builds a fresh table.Model. Row-set swaps rebuild rather than
@@ -815,8 +873,8 @@ func (m Model) runAction(spec registry.ActionSpec, row registry.Row) tea.Cmd {
 	}
 	scope := m.scope
 	return func() tea.Msg {
-		err := a.RunAction(context.Background(), scope, spec.Key, row.ID)
-		return actionResultMsg{label: spec.Label + " " + row.Name, err: err}
+		msg, err := a.RunAction(context.Background(), scope, spec.Key, row.ID)
+		return actionResultMsg{label: spec.Label + " " + row.Name, msg: msg, err: err}
 	}
 }
 
@@ -926,6 +984,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = msg.label + " failed: " + msg.err.Error()
 			return m, nil
 		}
+		if msg.msg != "" {
+			// Multi-line results (e.g. a plugin-status list) don't fit the
+			// one-line status bar, which clips to terminal width — show
+			// them in the scrollable detail view instead.
+			m.mode = modeDetail
+			m.detail.SetContent(msg.label + "\n\n" + colorizePluginStatusText(msg.msg))
+			m.detail.GotoTop()
+			m.detailExport = nil
+			return m, nil
+		}
 		m.statusMsg = msg.label + " requested"
 		m.loading = true
 		return m, m.load()
@@ -960,7 +1028,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionReadyMsg:
 		if msg.err != nil {
-			m.statusMsg = "bastion session failed: " + msg.err.Error()
+			m.statusMsg = "ssh setup failed: " + msg.err.Error()
+			return m, nil
+		}
+		// Inside a multiplexer, open a new pane/window instead of taking
+		// over this one — toci's own TUI keeps running untouched. Outside
+		// one there's no way to show two full-screen programs in one
+		// terminal at once, so fall back to suspending toci for the ssh
+		// session (tea.ExecProcess already resumes it via sshDoneMsg once
+		// ssh exits).
+		if os.Getenv("HERDR_ENV") != "" {
+			if err := openInHerdrPane(msg.sshCmd); err != nil {
+				m.statusMsg = "herdr pane split failed: " + err.Error()
+				return m, nil
+			}
+			m.statusMsg = "ssh opened in new herdr pane"
+			return m, nil
+		}
+		if os.Getenv("TMUX") != "" {
+			if err := exec.Command("tmux", "new-window", msg.sshCmd).Start(); err != nil {
+				m.statusMsg = "tmux new-window failed: " + err.Error()
+				return m, nil
+			}
+			m.statusMsg = "ssh opened in new tmux window"
 			return m, nil
 		}
 		m.statusMsg = ""
@@ -1070,6 +1160,18 @@ func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promptInput.CursorEnd()
 			m.promptInput.Focus()
 			m.mode = modePrompt
+		case pickerSSHMode:
+			if item.key == "direct" {
+				m.sshDirect = true
+				m.promptInput.SetValue("opc")
+				m.promptInput.CursorEnd()
+				m.promptInput.Focus()
+				m.mode = modePrompt
+				return m, nil
+			}
+			m.sshDirect = false
+			m.statusMsg = "looking for a bastion..."
+			return m, m.fetchBastions()
 		case pickerResource:
 			for i, res := range m.resources {
 				if res.Key() != item.key {
@@ -1154,6 +1256,10 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			username = "opc"
 		}
 		m.mode = modeTable
+		if m.sshDirect {
+			m.statusMsg = "connecting directly to " + m.pendingRow.Name + "..."
+			return m, m.createDirectSession(m.pendingRow, username)
+		}
 		m.statusMsg = "creating bastion session for " + m.pendingRow.Name + "..."
 		return m, m.createSession(m.sshBastionID, m.pendingRow, username)
 	}
@@ -1293,8 +1399,12 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingRow = row
-		m.statusMsg = "looking for a bastion..."
-		return m, m.fetchBastions()
+		m.picker = newPicker(pickerSSHMode, "ssh: "+row.Name, []pickerItem{
+			{key: "bastion", label: "via Bastion service"},
+			{key: "direct", label: "direct (local key, no bastion — e.g. over FastConnect)"},
+		})
+		m.mode = modePicker
+		return m, nil
 
 	case "i":
 		key := m.current().Key()
@@ -1652,8 +1762,12 @@ func (m Model) renderConfirm() string {
 }
 
 func (m Model) renderPrompt() string {
+	title := "SSH via Bastion: " + m.pendingRow.Name
+	if m.sshDirect {
+		title = "SSH direct: " + m.pendingRow.Name
+	}
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("SSH via Bastion: " + m.pendingRow.Name))
+	b.WriteString(titleStyle.Render(title))
 	b.WriteString("\n\nOS username on target:\n\n> ")
 	b.WriteString(m.promptInput.View())
 	b.WriteString("\n\n")
