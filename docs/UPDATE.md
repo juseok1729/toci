@@ -2,6 +2,14 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.15 (진행 중, `nightly`)
+
+### SSH 세션을 내장 pty 터미널로 전환
+
+- 기존엔 SSH 실행 시 `HERDR_ENV`/`TMUX` 환경변수로 herdr pane split, tmux new-window, `tea.ExecProcess`(toci 일시 정지 후 복귀) 3-way로 분기했음.
+- `internal/app/embedded_terminal.go`(pty + `vt` 터미널 에뮬레이터)로 교체 — 별도 프로그램/멀티플렉서 없이, ssh 세션을 toci 화면 안의 테두리 박스(`modeEmbeddedTerm`)에서 그대로 렌더링.
+- `ctrl+\`로 강제 종료, `shift+↑/↓`로 로컬 스크롤백 — 원격 쉘에서 `exit`하면 정상 종료로 테이블로 복귀. 창 크기가 바뀌면(`tea.WindowSizeMsg`) pty 크기도 함께 갱신.
+
 ## v0.1.14
 
 ### 서브넷 IP RANGE 컬럼 + 사용 가능 호스트 수, AD 컬럼 제거

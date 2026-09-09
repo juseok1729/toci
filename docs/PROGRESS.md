@@ -166,6 +166,13 @@ RUNNING/STOPPED 배경 배지(위 "제일 오래 걸린 버그 사냥" 절)에�
 
 Oracle Cloud Agent의 "Compute Instance Monitoring" 플러그인을 `--write` 모드에서 켤 수 있는 액션 추가 — `UpdateInstance`에 `AgentConfig{IsMonitoringDisabled: false, PluginsConfig: [{Name: "Compute Instance Monitoring", DesiredState: ENABLED}]}`를 보낸다. 다른 플러그인(Bastion 등)은 `PluginsConfig`에 안 넣어서 안 건드림 — OCI가 플러그인을 개별 업데이트하는 방식이라 명시 안 한 플러그인은 현재 상태 유지. **실제 인스턴스 설정을 바꾸는 동작이라 사용자 동의 없이 라이브 테스트는 안 했다** — 기존 start/stop과 완전히 같은 구조(`Actionable` 인터페이스, confirm-by-typing-name)라 빌드/테스트만 확인. 다음 세션에서 `--write`로 직접 켜보고 실제로 반영되는지 확인 필요.
 
+### SSH 세션을 내장 pty 터미널로 전환 (herdr/tmux pane 분기 제거)
+
+- 기존엔 SSH 실행 시 `HERDR_ENV`/`TMUX` 환경변수를 보고 각각 herdr pane split, tmux new-window로 분기하고, 둘 다 아니면 `tea.ExecProcess`로 toci 자체를 잠깐 내려주는 3-way 분기였음.
+- `internal/app/embedded_terminal.go`(pty + `vt` 에뮬레이터)로 교체 — ssh 세션을 toci 화면 안의 테두리 박스(`modeEmbeddedTerm`)에서 그대로 렌더링. 별도 프로그램/멀티플렉서 의존 없이 동작.
+- `ctrl+\`로 강제 종료, `shift+↑/↓`로 스크롤백 — 원격 쉘에서 `exit`하면 정상 종료로 테이블로 복귀.
+- 리사이즈(`tea.WindowSizeMsg`) 시 pty 크기도 함께 갱신.
+
 ## 계획에 없던, 구현하며 발견한 이슈
 
 **bubbles table/viewport의 내부 상태 버그**: 기존 `table.Model`에 `SetRows()`로 더 적은/다른 행을 밀어넣으면, 이전 커서·스크롤 오프셋(YOffset)이 새 행 수와 안 맞아 `viewport.visibleLines()`에서 `slice bounds out of range` 패닉이 난다 (bubbles v1.0.0 기준, `clamp()`가 `low > high`일 때 값을 스왑하는 구현 때문에 top > bottom인 슬라이스가 만들어짐).
