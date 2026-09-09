@@ -105,11 +105,18 @@ type sessionReadyMsg struct {
 	sshCmd string
 	err    error
 
-	// cacheKey/expiresAt are set only for a freshly created bastion session
-	// (empty for direct sessions and for a cache-hit replay, which has
-	// nothing new to store) — see Model.bastionSessions.
+	// cacheKey/expiresAt are set for any bastion session (fresh or reused;
+	// empty only for a direct session, which has no server-side session to
+	// cache) — see Model.bastionSessions.
 	cacheKey  string
 	expiresAt time.Time
+	// reused is true when sshCmd came from an existing session (memory
+	// cache or findReusableSession) rather than a brand-new CreateSession.
+	// A reused session was registered with whatever key was active when it
+	// was first created — if the key picked for *this* attempt differs,
+	// authentication fails even though the session itself is healthy; see
+	// embTermExitMsg's quickFail retry.
+	reused bool
 }
 
 // cachedBastionSession is one entry in Model.bastionSessions: a bastion
@@ -162,6 +169,11 @@ type Model struct {
 	// sole candidate auto-selected) for the ssh setup in progress.
 	sshKeyPairs []sshKeyPair
 	sshKey      sshKeyPair
+	// sshUsername is the OS username from the last modePrompt submission —
+	// kept around (alongside sshBastionID/pendingRow/sshKey) so
+	// embTermExitMsg's automatic retry can re-issue the same connection
+	// with skipReuse, without re-asking the user for anything.
+	sshUsername string
 
 	// bastionSessions caches a live bastion session's ssh command by
 	// bastionSessionCacheKey, so reconnecting to the same target+user
@@ -175,6 +187,13 @@ type Model struct {
 	// embTermExitMsg evict a session that just failed instead of handing
 	// out the same broken one again until it naturally expires.
 	activeSessionCacheKey string
+	// activeSessionWasReused mirrors sessionReadyMsg.reused for the session
+	// the current embedded terminal is using — embTermExitMsg only retries
+	// with skipReuse when this is true and the failure was a quickFail;
+	// a fresh session that fails quickly is a real problem (bad key,
+	// unreachable network), not a stale-reuse mismatch, and retrying it
+	// would just repeat the same failure.
+	activeSessionWasReused bool
 
 	mode      mode
 	loading   bool
@@ -246,6 +265,15 @@ type Model struct {
 
 	// blinkOn alternates on blinkTickCmd's timer to drive blinkRecentRows.
 	blinkOn bool
+
+	// bastionPending is true while a bastion session lookup/creation Cmd
+	// (from createSession — the leg that can block on OCI up to ~90s) is in
+	// flight, driving the status-bar spinner via bastionSpinnerTickCmd.
+	// Unlike blinkTickCmd (started once in Init, runs forever), this tick
+	// chain is started only for the wait and stops itself the moment this
+	// flips back to false, since it's naturally bounded by that one Cmd.
+	bastionPending      bool
+	bastionSpinnerFrame int
 	// blinkEnabled is the user-facing on/off switch for the whole feature
 	// ("b" key) — some users just don't want blinking rows, independent of
 	// blinkOn's animation timer.
@@ -340,6 +368,14 @@ func blinkTickCmd() tea.Cmd {
 	})
 }
 
+type bastionSpinnerTickMsg struct{}
+
+func bastionSpinnerTickCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+		return bastionSpinnerTickMsg{}
+	})
+}
+
 func (m Model) fetchBastions() tea.Cmd {
 	factory := m.factory
 	scope := m.scope
@@ -357,7 +393,13 @@ func (m Model) fetchBastions() tea.Cmd {
 // to ACTIVE, then hands back a ready-to-run ssh command plus the cache
 // entry for it. It's a single blocking tea.Cmd — polling here doesn't
 // block the UI since bubbletea runs each Cmd in its own goroutine.
-func (m Model) createSession(bastionID string, row registry.Row, username string, key sshKeyPair) tea.Cmd {
+//
+// skipReuse forces a fresh session even if a reusable one would otherwise
+// be found — used for the automatic retry after a reused session's key
+// turns out not to match it (see embTermExitMsg's quickFail handling): a
+// second lookup would just find the same session again and fail the same
+// way.
+func (m Model) createSession(bastionID string, row registry.Row, username string, key sshKeyPair, skipReuse bool) tea.Cmd {
 	factory := m.factory
 	scope := m.scope
 	return func() tea.Msg {
@@ -369,9 +411,11 @@ func (m Model) createSession(bastionID string, row registry.Row, username string
 		}
 
 		cacheKey := bastionSessionCacheKey(bastionID, row.ID, username)
-		if existing, expiresAt, ok := findReusableSession(ctx, factory, scope, bastionID, row.ID, username); ok {
-			if sshCmd, err := buildSSHCommand(existing, key.privateKeyPath); err == nil {
-				return sessionReadyMsg{sshCmd: sshCmd, cacheKey: cacheKey, expiresAt: expiresAt}
+		if !skipReuse {
+			if existing, expiresAt, ok := findReusableSession(ctx, factory, scope, bastionID, row.ID, username); ok {
+				if sshCmd, err := buildSSHCommand(existing, key.privateKeyPath); err == nil {
+					return sessionReadyMsg{sshCmd: sshCmd, cacheKey: cacheKey, expiresAt: expiresAt, reused: true}
+				}
 			}
 		}
 
@@ -1034,6 +1078,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.blinkOn = !m.blinkOn
 		return m, blinkTickCmd()
 
+	case bastionSpinnerTickMsg:
+		if !m.bastionPending {
+			return m, nil
+		}
+		m.bastionSpinnerFrame++
+		return m, bastionSpinnerTickCmd()
+
 	case rowsMsg:
 		if m.mode == modeSplash {
 			m.splashDataReady = true
@@ -1139,6 +1190,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sessionReadyMsg:
+		m.bastionPending = false
 		if msg.err != nil {
 			m.statusMsg = "ssh setup failed: " + msg.err.Error()
 			return m, nil
@@ -1155,6 +1207,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 		m.embTerm = et
 		m.activeSessionCacheKey = msg.cacheKey
+		m.activeSessionWasReused = msg.reused
 		m.mode = modeEmbeddedTerm
 		return m, et.waitForActivity()
 
@@ -1169,23 +1222,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// back to the table — the SIGKILL that triggers this message
 		// always surfaces as a "signal: killed" error from cmd.Wait(),
 		// which isn't an actual failure here, so leave that message alone.
-		if killed := m.embTerm != nil && m.embTerm.killed; !killed {
-			if msg.err != nil {
-				m.statusMsg = "ssh exited with error: " + msg.err.Error()
-				// The session might be the thing that's actually broken
-				// (e.g. expired early server-side) rather than this one
-				// connection attempt — evict it so the next try creates a
-				// fresh one instead of replaying the same failure for up
-				// to bastionSessionTTLSeconds.
-				if m.activeSessionCacheKey != "" {
-					delete(m.bastionSessions, m.activeSessionCacheKey)
-				}
-			} else {
-				m.statusMsg = "ssh session closed"
+		killed := m.embTerm != nil && m.embTerm.killed
+		if !killed && msg.err != nil {
+			// The session might be the thing that's actually broken
+			// (e.g. expired early server-side) rather than this one
+			// connection attempt — evict it so the next try creates a
+			// fresh one instead of replaying the same failure for up
+			// to bastionSessionTTLSeconds.
+			if m.activeSessionCacheKey != "" {
+				delete(m.bastionSessions, m.activeSessionCacheKey)
 			}
+			// A *reused* session that dies within quickFailWindow almost
+			// always means the key picked for this attempt isn't the one
+			// that session was registered with (see findReusableSession /
+			// the in-memory cache in updatePrompt) — the session itself
+			// is fine, this key just isn't authorized on it. toci has no
+			// UI to create/manage bastion sessions directly, so the only
+			// sensible recovery is to stop reusing and make a fresh
+			// session with the key actually selected — once, automatically,
+			// rather than surfacing exit status 255 and making the user
+			// re-trigger the whole ssh flow by hand.
+			if m.activeSessionWasReused && m.embTerm != nil && m.embTerm.quickFail() {
+				m.statusMsg = "reused session rejected this key — creating a new bastion session for " + m.pendingRow.Name + "..."
+				m.embTerm = nil
+				m.activeSessionCacheKey = ""
+				m.activeSessionWasReused = false
+				m.bastionPending = true
+				m.bastionSpinnerFrame = 0
+				m.mode = modeTable
+				return m, tea.Batch(m.createSession(m.sshBastionID, m.pendingRow, m.sshUsername, m.sshKey, true), bastionSpinnerTickCmd())
+			}
+			m.statusMsg = "ssh exited with error: " + msg.err.Error()
+		} else if !killed {
+			m.statusMsg = "ssh session closed"
 		}
 		m.embTerm = nil
 		m.activeSessionCacheKey = ""
+		m.activeSessionWasReused = false
 		m.mode = modeTable
 		return m, nil
 
@@ -1419,6 +1492,7 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			username = "opc"
 		}
 		m.mode = modeTable
+		m.sshUsername = username
 		if m.sshDirect {
 			m.statusMsg = "connecting directly to " + m.pendingRow.Name + "..."
 			return m, m.createDirectSession(m.pendingRow, username, m.sshKey)
@@ -1427,11 +1501,13 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if cached, ok := m.bastionSessions[cacheKey]; ok && time.Now().Add(bastionSessionReuseMargin).Before(cached.expiresAt) {
 			m.statusMsg = "reusing existing bastion session for " + m.pendingRow.Name + "..."
 			return m, func() tea.Msg {
-				return sessionReadyMsg{sshCmd: cached.sshCmd, cacheKey: cacheKey, expiresAt: cached.expiresAt}
+				return sessionReadyMsg{sshCmd: cached.sshCmd, cacheKey: cacheKey, expiresAt: cached.expiresAt, reused: true}
 			}
 		}
 		m.statusMsg = "connecting to bastion for " + m.pendingRow.Name + "..."
-		return m, m.createSession(m.sshBastionID, m.pendingRow, username, m.sshKey)
+		m.bastionPending = true
+		m.bastionSpinnerFrame = 0
+		return m, tea.Batch(m.createSession(m.sshBastionID, m.pendingRow, username, m.sshKey, false), bastionSpinnerTickCmd())
 	}
 	var cmd tea.Cmd
 	m.promptInput, cmd = m.promptInput.Update(msg)
@@ -1724,7 +1800,7 @@ func (m Model) View() string {
 		}
 		rendered := statusStyle.Render(hint)
 		if m.statusMsg != "" {
-			rendered += statusStyle.Render(" · ") + renderStatusMsg(m.statusMsg)
+			rendered += statusStyle.Render(" · ") + m.bastionSpinnerPrefix() + renderStatusMsg(m.statusMsg)
 		}
 		main.WriteString(rendered)
 
@@ -2020,6 +2096,18 @@ func (m Model) helpEntries() []helpEntry {
 	return entries
 }
 
+// bastionSpinnerPrefix renders the animated spinner glyph (see splash.go's
+// spinnerFrames/spinnerStyle) while a bastion session lookup/creation is in
+// flight, so the status bar doesn't just sit on a static "connecting..."
+// string for however long that OCI round-trip takes (up to ~90s worst
+// case). Empty otherwise.
+func (m Model) bastionSpinnerPrefix() string {
+	if !m.bastionPending {
+		return ""
+	}
+	return spinnerStyle.Render(spinnerFrames[m.bastionSpinnerFrame%len(spinnerFrames)]) + " "
+}
+
 // renderStatusMsg colors m.statusMsg green for a successful export, red
 // for a failure (every failure message in this app says "failed" or
 // "error" — see the m.statusMsg assignments in Update()), and leaves
@@ -2046,7 +2134,7 @@ func (m Model) renderStatusLine() string {
 	parts = append(parts, "space: shortcuts")
 	line := statusStyle.Render(strings.Join(parts, " · "))
 	if m.statusMsg != "" {
-		line += statusStyle.Render(" · ") + renderStatusMsg(m.statusMsg)
+		line += statusStyle.Render(" · ") + m.bastionSpinnerPrefix() + renderStatusMsg(m.statusMsg)
 	}
 	return line
 }

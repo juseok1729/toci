@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	vt "github.com/charmbracelet/x/vt"
@@ -20,9 +21,10 @@ type embeddedTerm struct {
 	pty *os.File
 	emu *vt.SafeEmulator
 
-	changed chan struct{}
-	done    chan struct{}
-	exitErr error
+	changed   chan struct{}
+	done      chan struct{}
+	exitErr   error
+	startedAt time.Time
 
 	// killed marks an intentional close() (the ctrl+\ escape hatch) so the
 	// embTermExitMsg that follows shortly after — cmd.Wait() reports a
@@ -46,15 +48,35 @@ func startEmbeddedTerm(shellCmd string, cols, rows int) (*embeddedTerm, error) {
 		return nil, err
 	}
 	et := &embeddedTerm{
-		cmd:     cmd,
-		pty:     f,
-		emu:     vt.NewSafeEmulator(cols, rows),
-		changed: make(chan struct{}, 1),
-		done:    make(chan struct{}),
+		cmd:       cmd,
+		pty:       f,
+		emu:       vt.NewSafeEmulator(cols, rows),
+		changed:   make(chan struct{}, 1),
+		done:      make(chan struct{}),
+		startedAt: time.Now(),
 	}
 	go et.readLoop()
 	go et.replyLoop()
 	return et, nil
+}
+
+// quickFailWindow is how soon after starting an exit counts as "never
+// really connected" rather than "was connected, then dropped" — see
+// quickFail. A real ssh auth/connection failure exits in well under a
+// second; a session that's actually been used runs far longer than this.
+//
+// ponytail: a fixed threshold, not "did we ever see a shell prompt" — a
+// pathologically slow network handshake that then fails would slip past
+// this and just show as a normal error instead of triggering the
+// create-a-fresh-session retry. Upgrade path: track whether any pty output
+// was ever received instead of timing it.
+const quickFailWindow = 5 * time.Second
+
+// quickFail reports whether the process exited implausibly soon after
+// starting — the signal a caller uses to tell "this session/key doesn't
+// actually work" apart from a normal, later disconnect.
+func (et *embeddedTerm) quickFail() bool {
+	return time.Since(et.startedAt) < quickFailWindow
 }
 
 // readLoop feeds pty output into the emulator until the pty closes (the

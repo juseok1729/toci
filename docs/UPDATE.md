@@ -2,6 +2,18 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.16
+
+### Bastion 세션 연결 대기 스피너
+
+- `CreateSession` 폴링(최대 ~90초)이나 `ListSessions`/`GetSession` 조회가 도는 동안 상태표시줄이 정적인 "connecting to bastion..." 텍스트로 멈춰 보이던 문제 → splash 화면과 같은 Braille 스피너(`spinnerFrames`/`spinnerStyle`)를 재사용해 `blinkTickCmd`와 동일한 자체 재스케줄 패턴(`bastionSpinnerTickCmd`, 120ms)으로 애니메이션. 다만 blink와 달리 `Init()`에서 영구히 도는 게 아니라 `bastionPending`이 켜질 때만 시작되고 꺼지면 스스로 멈춤 — 메모리/서버 캐시로 즉시 붙는 경우(대기 자체가 없음)엔 뜨지 않음.
+
+### 재사용한 Bastion 세션이 다른 키를 거부하면 자동으로 새 세션 생성
+
+- 세션 재사용(메모리 캐시든 `findReusableSession`으로 찾은 서버 세션이든)은 그 세션이 **원래 등록됐던 키**로만 인증되는데, 사용자가 이번 접속에서 다른 키를 고르면 SSH가 `exit status 255`로 조용히 실패하던 걸 사용자가 지적 — toci엔 Bastion 세션을 직접 만들고 관리하는 UI가 없으니, 에러로 끝내는 대신 자동으로 새 세션을 만들어야 한다는 피드백.
+- `embeddedTerm`에 `startedAt`을 기록하고, 시작한 지 5초(`quickFailWindow`) 안에 죽으면 "애초에 연결이 안 된 것"으로 보는 `quickFail()`을 추가 — 실제로 한참 쓰다가 나중에 끊긴 정상 케이스와 구분하기 위함. `sessionReadyMsg.reused`로 이번 접속이 재사용이었는지 표시해뒀다가, `embTermExitMsg`에서 "재사용 + quickFail" 조합이면 에러 대신 `createSession(..., skipReuse: true)`로 재사용을 건너뛰고 지금 고른 키로 완전히 새 세션을 자동 생성.
+- 재시도는 딱 한 번만 — 새로 만든 세션은 `reused = false`이므로, 그것도 quickFail로 죽으면(진짜 키가 잘못됐거나 네트워크 문제) 재귀적으로 또 재시도하지 않고 정상적으로 에러를 보여줌.
+
 ## v0.1.15
 
 ### SSH 세션을 내장 pty 터미널로 전환

@@ -188,6 +188,18 @@ Oracle Cloud Agent의 "Compute Instance Monitoring" 플러그인을 `--write` �
 - **Bastion 세션 재사용**: 접속마다 무조건 새 `CreateSession`을 호출하던 것을 `(bastionID, instanceID, username)` 키로 세션의 ssh 명령 + 만료시각(TTL 1800초)을 `Model.bastionSessions`에 캐싱해 TTL 안에서는 재사용하도록 변경 — Bastion 하나당 동시 세션 수 기본 제한 초과(`LimitExceeded`)와, 매번 세션 ACTIVE 대기(수 초~수십 초)가 들던 비용을 줄임. 재사용 판정엔 2분 여유(`bastionSessionReuseMargin`)를 둬 만료 직전 세션은 새로 만들고, 재사용한 세션이 실제로 죽어 SSH가 에러로 끝나면 그 캐시 엔트리를 즉시 삭제해 같은 실패를 TTL 끝까지 반복하지 않게 함.
 - **재사용 캐시가 toci 재시작에서도 살아남게** (`findReusableSession`, `internal/app/bastion.go`): `Model.bastionSessions`는 프로세스 메모리일 뿐이라 toci를 껐다 켜면 서버엔 아직 ACTIVE한 세션이 있어도 무조건 새로 만들던 걸 사용자가 지적. `createSession`이 새 세션을 만들기 전에 해당 Bastion의 `ListSessions(sessionLifecycleState=ACTIVE)`를 훑어 `TargetResourceDetails`를 `ManagedSshSessionTargetResourceDetails`로 타입 단언한 뒤 `TargetResourceId`/`TargetResourceOperatingSystemUserName`이 정확히 일치하고 TTL이 아직 여유있는 세션을 찾으면 `GetSession`으로 전체 세션(`SshMetadata` 포함)을 받아와 재사용. 디스크에 캐시를 영속화하는 대신 OCI 자체를 그때그때 조회하는 쪽을 택함 — 파일 I/O·직렬화·여러 toci 프로세스 간 캐시 정합성 문제를 아예 안 만듦. 인메모리 캐시(`Model.bastionSessions`)는 그대로 둬서 같은 프로세스 안 재접속은 API 호출 없이 즉시 재사용(2단 캐시: 메모리 우선, 미스면 서버 조회).
 
+### Bastion 세션 연결 대기 스피너
+
+`CreateSession` 폴링(최대 ~90초)이나 `ListSessions`/`GetSession` 조회가 도는 동안 상태표시줄이 정적인 "connecting to bastion..." 텍스트로 멈춰 보이던 문제 → splash 화면과 같은 Braille 스피너(`spinnerFrames`/`spinnerStyle`, `splash.go`)를 재사용해 `blinkTickCmd`와 동일한 자체 재스케줄 패턴(`bastionSpinnerTickCmd`, 120ms)으로 애니메이션. blink와 달리 `Init()`에서 영구히 도는 게 아니라 `bastionPending`이 켜질 때만 시작되고 꺼지면 스스로 멈춤 — 메모리/서버 캐시로 즉시 붙는 경우(대기 자체가 없음)엔 뜨지 않음.
+
+### 재사용한 Bastion 세션이 다른 키를 거부하면 자동으로 새 세션 생성
+
+세션 재사용(메모리 캐시든 `findReusableSession`으로 찾은 서버 세션이든)은 그 세션이 **원래 등록됐던 키**로만 인증되는데, 사용자가 이번 접속에서 다른 키를 고르면 SSH가 `exit status 255`로 조용히 실패하던 걸 사용자가 지적 — toci엔 Bastion 세션을 직접 만들고 관리하는 UI가 없으니, 에러로 끝내는 대신 자동으로 새 세션을 만들어야 한다는 피드백.
+
+- `embeddedTerm`에 `startedAt`을 기록하고, 시작한 지 5초(`quickFailWindow`) 안에 죽으면 "애초에 연결이 안 된 것"으로 보는 `quickFail()`을 추가 — 실제로 한참 쓰다가 나중에 끊긴 정상 케이스와 구분하기 위함.
+- `sessionReadyMsg.reused`로 이번 접속이 재사용이었는지 표시해뒀다가, `embTermExitMsg`에서 "재사용 + quickFail" 조합이면 에러 대신 `createSession(..., skipReuse: true)`로 재사용을 건너뛰고 지금 고른 키로 완전히 새 세션을 자동 생성.
+- 재시도는 딱 한 번만 — 새로 만든 세션은 `reused = false`이므로, 그것도 quickFail로 죽으면(진짜 키가 잘못됐거나 네트워크 문제) 재귀적으로 또 재시도하지 않고 정상적으로 에러를 보여줌.
+
 ## 계획에 없던, 구현하며 발견한 이슈
 
 **bubbles table/viewport의 내부 상태 버그**: 기존 `table.Model`에 `SetRows()`로 더 적은/다른 행을 밀어넣으면, 이전 커서·스크롤 오프셋(YOffset)이 새 행 수와 안 맞아 `viewport.visibleLines()`에서 `slice bounds out of range` 패닉이 난다 (bubbles v1.0.0 기준, `clamp()`가 `low > high`일 때 값을 스왑하는 구현 때문에 top > bottom인 슬라이스가 만들어짐).
