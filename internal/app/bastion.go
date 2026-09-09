@@ -136,6 +136,53 @@ func bastionSessionCacheKey(bastionID, instanceID, username string) string {
 	return bastionID + "|" + instanceID + "|" + username
 }
 
+// findReusableSession looks for an already-ACTIVE bastion session matching
+// this exact target (instance + OS user) with enough of its TTL left to be
+// worth reusing — covers the case Model.bastionSessions can't: a session
+// created by a previous toci run (or another terminal entirely) that's
+// still alive server-side, which an in-memory-only cache has no way to
+// know about. Any error here just means "found nothing" to the caller —
+// this is an optimization on top of createBastionSession, not something
+// worth failing the connection over.
+func findReusableSession(ctx context.Context, factory *clients.Factory, s registry.Scope, bastionID, instanceID, username string) (oci_bastion.Session, time.Time, bool) {
+	client, err := factory.Bastion(s.Region)
+	if err != nil {
+		return oci_bastion.Session{}, time.Time{}, false
+	}
+	page := ""
+	for {
+		req := oci_bastion.ListSessionsRequest{
+			BastionId:             &bastionID,
+			SessionLifecycleState: oci_bastion.ListSessionsSessionLifecycleStateActive,
+		}
+		if page != "" {
+			req.Page = &page
+		}
+		resp, err := client.ListSessions(ctx, req)
+		if err != nil {
+			return oci_bastion.Session{}, time.Time{}, false
+		}
+		for _, item := range resp.Items {
+			target, ok := item.TargetResourceDetails.(oci_bastion.ManagedSshSessionTargetResourceDetails)
+			if !ok || deref(target.TargetResourceId) != instanceID || deref(target.TargetResourceOperatingSystemUserName) != username {
+				continue
+			}
+			full, err := client.GetSession(ctx, oci_bastion.GetSessionRequest{SessionId: item.Id})
+			if err != nil || full.TimeCreated == nil || full.SessionTtlInSeconds == nil {
+				continue
+			}
+			expiresAt := full.TimeCreated.Time.Add(time.Duration(*full.SessionTtlInSeconds) * time.Second)
+			if time.Now().Add(bastionSessionReuseMargin).Before(expiresAt) {
+				return full.Session, expiresAt, true
+			}
+		}
+		if resp.OpcNextPage == nil {
+			return oci_bastion.Session{}, time.Time{}, false
+		}
+		page = *resp.OpcNextPage
+	}
+}
+
 // createBastionSession creates a managed-SSH bastion session and blocks
 // until it becomes ACTIVE (or fails / times out). It's meant to run inside
 // a tea.Cmd goroutine — sleeping here doesn't block the UI.

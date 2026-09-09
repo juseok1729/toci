@@ -349,11 +349,14 @@ func (m Model) fetchBastions() tea.Cmd {
 	}
 }
 
-// createSession resolves the instance's private IP, creates the bastion
-// session with the already-resolved local key and polls it to ACTIVE, then
-// hands back a ready-to-run ssh command plus the cache entry for it. It's a
-// single blocking tea.Cmd — polling here doesn't block the UI since
-// bubbletea runs each Cmd in its own goroutine.
+// createSession resolves the instance's private IP, then either reuses an
+// already-ACTIVE session found live on OCI (see findReusableSession — this
+// is what makes reuse survive a toci restart, unlike the in-memory-only
+// Model.bastionSessions checked before this Cmd even runs) or creates a
+// fresh bastion session with the already-resolved local key and polls it
+// to ACTIVE, then hands back a ready-to-run ssh command plus the cache
+// entry for it. It's a single blocking tea.Cmd — polling here doesn't
+// block the UI since bubbletea runs each Cmd in its own goroutine.
 func (m Model) createSession(bastionID string, row registry.Row, username string, key sshKeyPair) tea.Cmd {
 	factory := m.factory
 	scope := m.scope
@@ -364,6 +367,14 @@ func (m Model) createSession(bastionID string, row registry.Row, username string
 		if err != nil {
 			return sessionReadyMsg{err: fmt.Errorf("resolve instance private IP: %w", err)}
 		}
+
+		cacheKey := bastionSessionCacheKey(bastionID, row.ID, username)
+		if existing, expiresAt, ok := findReusableSession(ctx, factory, scope, bastionID, row.ID, username); ok {
+			if sshCmd, err := buildSSHCommand(existing, key.privateKeyPath); err == nil {
+				return sessionReadyMsg{sshCmd: sshCmd, cacheKey: cacheKey, expiresAt: expiresAt}
+			}
+		}
+
 		createdAt := time.Now()
 		session, err := createBastionSession(ctx, factory, scope, bastionID, row.ID, privateIP, username, key.pubKeyContent)
 		if err != nil {
@@ -375,7 +386,7 @@ func (m Model) createSession(bastionID string, row registry.Row, username string
 		}
 		return sessionReadyMsg{
 			sshCmd:    sshCmd,
-			cacheKey:  bastionSessionCacheKey(bastionID, row.ID, username),
+			cacheKey:  cacheKey,
 			expiresAt: createdAt.Add(bastionSessionTTLSeconds * time.Second),
 		}
 	}
@@ -1419,7 +1430,7 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return sessionReadyMsg{sshCmd: cached.sshCmd, cacheKey: cacheKey, expiresAt: cached.expiresAt}
 			}
 		}
-		m.statusMsg = "creating bastion session for " + m.pendingRow.Name + "..."
+		m.statusMsg = "connecting to bastion for " + m.pendingRow.Name + "..."
 		return m, m.createSession(m.sshBastionID, m.pendingRow, username, m.sshKey)
 	}
 	var cmd tea.Cmd
