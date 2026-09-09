@@ -147,6 +147,14 @@ func renderVcnMermaid(ctx context.Context, factory *clients.Factory, scope regis
 		}
 	}
 
+	if exascaleRows, err := fetchAll(ctx, registry.NewExadbVmClusterResource(factory), scope); err == nil {
+		for _, row := range exascaleRows {
+			if c, ok := row.Raw.(registry.ExadbVmClusterRow); ok {
+				add(deref(c.SubnetId), "cylinder", row.Name)
+			}
+		}
+	}
+
 	var drgNames []string
 	if vnClient, err := factory.VirtualNetwork(scope.Region); err == nil {
 		if drgIDs, err := attachedDrgIDs(ctx, vnClient, scope.CompartmentID, scope.VcnID); err == nil && len(drgIDs) > 0 {

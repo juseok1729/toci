@@ -173,6 +173,12 @@ Oracle Cloud Agent의 "Compute Instance Monitoring" 플러그인을 `--write` �
 - `ctrl+\`로 강제 종료, `shift+↑/↓`로 스크롤백 — 원격 쉘에서 `exit`하면 정상 종료로 테이블로 복귀.
 - 리사이즈(`tea.WindowSizeMsg`) 시 pty 크기도 함께 갱신.
 
+### Exadata VM Cluster (Exascale) 리소스 추가 (`internal/registry/exascale.go`)
+
+- 사용자가 "리소스에 exascale도 추가해달라"고 요청 → `database.ExadbVmClusterSummary`/`ListExadbVmClusters`(기존 Exadata Cloud Service의 `CloudVmCluster*`와 나란히 존재하는, Exascale Infrastructure 전용 SDK 타입) 기반으로 기존 `exadata.go`(`CloudVmClusterResource`) 구조를 그대로 미러링해 추가.
+- OCPU가 아니라 ECPU 기반이라 `EnabledECpuCount`로 ECPU 컬럼을 넣었고, 뒤이어 "LICENSE(edition) 컬럼도 보고 싶다(BYOL로 생성함)"는 요청으로 `LicenseModel`(`BYOL`/`Included`) 컬럼도 추가 — Exascale 요약 타입엔 DB System과 달리 `DatabaseEdition` 필드 자체가 없어서, 실제로 있는 라이선스 모델 필드로 대체.
+- 다른 DB 계열 리소스(DB System/ADB/Exadata)와 동일하게 VCN 스코프(`vcnScopedResourceKeys`)에 포함, VCN 다이어그램(`m` export)에도 cylinder 노드로 추가.
+
 ## 계획에 없던, 구현하며 발견한 이슈
 
 **bubbles table/viewport의 내부 상태 버그**: 기존 `table.Model`에 `SetRows()`로 더 적은/다른 행을 밀어넣으면, 이전 커서·스크롤 오프셋(YOffset)이 새 행 수와 안 맞아 `viewport.visibleLines()`에서 `slice bounds out of range` 패닉이 난다 (bubbles v1.0.0 기준, `clamp()`가 `low > high`일 때 값을 스왑하는 구현 때문에 top > bottom인 슬라이스가 만들어짐).

@@ -10,6 +10,12 @@
 - `internal/app/embedded_terminal.go`(pty + `vt` 터미널 에뮬레이터)로 교체 — 별도 프로그램/멀티플렉서 없이, ssh 세션을 toci 화면 안의 테두리 박스(`modeEmbeddedTerm`)에서 그대로 렌더링.
 - `ctrl+\`로 강제 종료, `shift+↑/↓`로 로컬 스크롤백 — 원격 쉘에서 `exit`하면 정상 종료로 테이블로 복귀. 창 크기가 바뀌면(`tea.WindowSizeMsg`) pty 크기도 함께 갱신.
 
+### Exadata VM Cluster (Exascale) 리소스 추가
+
+- 사용자가 "리소스에 exascale도 추가해달라"고 요청 → `database.ExadbVmClusterSummary`/`ListExadbVmClusters`(기존 Exadata Cloud Service의 `CloudVmCluster*`와 나란히 존재하는, Exascale Infrastructure 전용 OCI SDK 타입) 기반으로 `internal/registry/exascale.go` 추가. 기존 `exadata.go`(`CloudVmClusterResource`) 구조를 그대로 미러링.
+- OCPU가 아니라 ECPU 기반이라 `EnabledECpuCount`로 ECPU 컬럼을 넣었고, 뒤이어 "LICENSE(edition) 컬럼도 보고 싶다(BYOL로 생성함)"는 요청으로 `LicenseModel`(`BYOL`/`Included`) 컬럼도 추가 — Exascale 요약 타입엔 DB System과 달리 `DatabaseEdition` 필드 자체가 없어서, 실제로 있는 라이선스 모델 필드로 대체했다.
+- 다른 DB 계열 리소스(DB System/ADB/Exadata)와 동일하게 VCN 스코프(`vcnScopedResourceKeys`)에 포함시키고, VCN 다이어그램(`m` export) 렌더링에도 cylinder 노드로 추가.
+
 ## v0.1.14
 
 ### 서브넷 IP RANGE 컬럼 + 사용 가능 호스트 수, AD 컬럼 제거

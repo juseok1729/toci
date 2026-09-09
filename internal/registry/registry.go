@@ -20,5 +20,6 @@ func All(f *clients.Factory) []Resource {
 		NewDbSystemResource(f),
 		NewAutonomousDatabaseResource(f),
 		NewCloudVmClusterResource(f),
+		NewExadbVmClusterResource(f),
 	}
 }
