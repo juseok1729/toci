@@ -104,7 +104,26 @@ type bastionsMsg struct {
 type sessionReadyMsg struct {
 	sshCmd string
 	err    error
+
+	// cacheKey/expiresAt are set only for a freshly created bastion session
+	// (empty for direct sessions and for a cache-hit replay, which has
+	// nothing new to store) — see Model.bastionSessions.
+	cacheKey  string
+	expiresAt time.Time
 }
+
+// cachedBastionSession is one entry in Model.bastionSessions: a bastion
+// session's already-built ssh command, reusable until the session's own
+// TTL runs out.
+type cachedBastionSession struct {
+	sshCmd    string
+	expiresAt time.Time
+}
+
+// bastionSessionReuseMargin is the headroom required before a cached
+// session's expiresAt for it to still be handed out — avoids starting a
+// connection on a session that OCI is about to expire out from under it.
+const bastionSessionReuseMargin = 2 * time.Minute
 
 type Model struct {
 	factory   *clients.Factory
@@ -136,6 +155,26 @@ type Model struct {
 	sshDirect    bool
 	promptInput  textinput.Model
 	embTerm      *embeddedTerm
+
+	// sshKeyPairs/sshKey hold the local-key resolution step: sshKeyPairs is
+	// the candidate list shown in the pickerSSHKey picker when more than one
+	// was found under ~/.ssh; sshKey is the one resolved (picked, or the
+	// sole candidate auto-selected) for the ssh setup in progress.
+	sshKeyPairs []sshKeyPair
+	sshKey      sshKeyPair
+
+	// bastionSessions caches a live bastion session's ssh command by
+	// bastionSessionCacheKey, so reconnecting to the same target+user
+	// within the session's TTL reuses it instead of creating a new one
+	// (each bastion allows only a few concurrent sessions). Cleared per
+	// entry on its own TTL (checked at lookup time) or when a reused
+	// session turns out to be dead (see embTermExitMsg).
+	bastionSessions map[string]cachedBastionSession
+	// activeSessionCacheKey is the cache key for the bastion session the
+	// current embedded terminal is using, "" for a direct session — lets
+	// embTermExitMsg evict a session that just failed instead of handing
+	// out the same broken one again until it naturally expires.
+	activeSessionCacheKey string
 
 	mode      mode
 	loading   bool
@@ -236,23 +275,24 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 	pi.Prompt = "" // renderPrompt draws its own "> " prefix
 
 	return Model{
-		factory:      factory,
-		profile:      profile,
-		version:      version,
-		resources:    registry.All(factory),
-		scope:        scope,
-		compPath:     []crumb{{ID: scope.CompartmentID, Name: "root"}},
-		table:        newTable(20),
-		detail:       viewport.New(80, 20),
-		filterInput:  fi,
-		confirmInput: ci,
-		promptInput:  pi,
-		writeEnabled: writeEnabled,
-		loading:      true,
-		autoRedirect: true,
-		mode:         modeSplash,
-		splashPhrase: splashPhrases[rand.Intn(len(splashPhrases))],
-		blinkEnabled: true,
+		factory:         factory,
+		profile:         profile,
+		version:         version,
+		resources:       registry.All(factory),
+		scope:           scope,
+		compPath:        []crumb{{ID: scope.CompartmentID, Name: "root"}},
+		table:           newTable(20),
+		detail:          viewport.New(80, 20),
+		filterInput:     fi,
+		confirmInput:    ci,
+		promptInput:     pi,
+		writeEnabled:    writeEnabled,
+		loading:         true,
+		autoRedirect:    true,
+		mode:            modeSplash,
+		splashPhrase:    splashPhrases[rand.Intn(len(splashPhrases))],
+		blinkEnabled:    true,
+		bastionSessions: map[string]cachedBastionSession{},
 	}
 }
 
@@ -309,56 +349,95 @@ func (m Model) fetchBastions() tea.Cmd {
 	}
 }
 
-// createSession resolves the instance's private IP, finds a local SSH key,
-// creates the bastion session and polls it to ACTIVE, then hands back a
-// ready-to-run ssh command. It's a single blocking tea.Cmd — polling here
-// doesn't block the UI since bubbletea runs each Cmd in its own goroutine.
-func (m Model) createSession(bastionID string, row registry.Row, username string) tea.Cmd {
+// createSession resolves the instance's private IP, creates the bastion
+// session with the already-resolved local key and polls it to ACTIVE, then
+// hands back a ready-to-run ssh command plus the cache entry for it. It's a
+// single blocking tea.Cmd — polling here doesn't block the UI since
+// bubbletea runs each Cmd in its own goroutine.
+func (m Model) createSession(bastionID string, row registry.Row, username string, key sshKeyPair) tea.Cmd {
 	factory := m.factory
 	scope := m.scope
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		pubKey, privKeyPath, err := localSSHKeyPair()
-		if err != nil {
-			return sessionReadyMsg{err: err}
-		}
 		privateIP, err := instancePrivateIP(ctx, factory, scope, row.ID)
 		if err != nil {
 			return sessionReadyMsg{err: fmt.Errorf("resolve instance private IP: %w", err)}
 		}
-		session, err := createBastionSession(ctx, factory, scope, bastionID, row.ID, privateIP, username, pubKey)
+		createdAt := time.Now()
+		session, err := createBastionSession(ctx, factory, scope, bastionID, row.ID, privateIP, username, key.pubKeyContent)
 		if err != nil {
 			return sessionReadyMsg{err: fmt.Errorf("create bastion session: %w", err)}
 		}
-		sshCmd, err := buildSSHCommand(session, privKeyPath)
+		sshCmd, err := buildSSHCommand(session, key.privateKeyPath)
 		if err != nil {
 			return sessionReadyMsg{err: err}
 		}
-		return sessionReadyMsg{sshCmd: sshCmd}
+		return sessionReadyMsg{
+			sshCmd:    sshCmd,
+			cacheKey:  bastionSessionCacheKey(bastionID, row.ID, username),
+			expiresAt: createdAt.Add(bastionSessionTTLSeconds * time.Second),
+		}
 	}
 }
 
 // createDirectSession skips the OCI Bastion service entirely and ssh's
-// straight to the instance's private IP with a local key — useful when the
-// caller's network already reaches the VCN directly (e.g. on-prem over
-// FastConnect) and a bastion hop isn't needed.
-func (m Model) createDirectSession(row registry.Row, username string) tea.Cmd {
+// straight to the instance's private IP with the already-resolved local
+// key — useful when the caller's network already reaches the VCN directly
+// (e.g. on-prem over FastConnect) and a bastion hop isn't needed. There's no
+// server-side session resource here, so nothing to cache.
+func (m Model) createDirectSession(row registry.Row, username string, key sshKeyPair) tea.Cmd {
 	factory := m.factory
 	scope := m.scope
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		_, privKeyPath, err := localSSHKeyPair()
-		if err != nil {
-			return sessionReadyMsg{err: err}
-		}
 		privateIP, err := instancePrivateIP(ctx, factory, scope, row.ID)
 		if err != nil {
 			return sessionReadyMsg{err: fmt.Errorf("resolve instance private IP: %w", err)}
 		}
-		return sessionReadyMsg{sshCmd: buildDirectSSHCommand(username, privateIP, privKeyPath)}
+		return sessionReadyMsg{sshCmd: buildDirectSSHCommand(username, privateIP, key.privateKeyPath)}
 	}
+}
+
+// resolveSSHKey runs right after the ssh mode (direct/bastion) is picked:
+// with exactly one local key candidate there's nothing to ask, so it's
+// auto-selected and setup continues immediately; with more than one, a
+// picker asks which one connects to this target before continuing.
+func (m *Model) resolveSSHKey() (tea.Model, tea.Cmd) {
+	keys, err := listSSHKeyPairs()
+	if err != nil {
+		m.statusMsg = err.Error()
+		return *m, nil
+	}
+	if len(keys) == 1 {
+		m.sshKey = keys[0]
+		return *m, m.continueSSHSetup()
+	}
+	m.sshKeyPairs = keys
+	items := make([]pickerItem, len(keys))
+	for i, k := range keys {
+		items[i] = pickerItem{key: k.privateKeyPath, label: k.name}
+	}
+	m.picker = newPicker(pickerSSHKey, "ssh key", items)
+	m.mode = modePicker
+	return *m, nil
+}
+
+// continueSSHSetup runs once both the ssh mode and the local key to use are
+// resolved: a direct session just needs the OS username next, a bastion
+// session needs a bastion picked (or, with a cached session already live
+// for it, nothing further at all — see updatePrompt).
+func (m *Model) continueSSHSetup() tea.Cmd {
+	if m.sshDirect {
+		m.promptInput.SetValue("opc")
+		m.promptInput.CursorEnd()
+		m.promptInput.Focus()
+		m.mode = modePrompt
+		return nil
+	}
+	m.statusMsg = "looking for a bastion..."
+	return m.fetchBastions()
 }
 
 // embTermSize returns the cols/rows the embedded terminal should use to
@@ -1053,6 +1132,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "ssh setup failed: " + msg.err.Error()
 			return m, nil
 		}
+		if msg.cacheKey != "" {
+			m.bastionSessions[msg.cacheKey] = cachedBastionSession{sshCmd: msg.sshCmd, expiresAt: msg.expiresAt}
+		}
 		cols, rows := m.embTermSize()
 		et, err := startEmbeddedTerm(msg.sshCmd, cols, rows)
 		if err != nil {
@@ -1061,6 +1143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusMsg = ""
 		m.embTerm = et
+		m.activeSessionCacheKey = msg.cacheKey
 		m.mode = modeEmbeddedTerm
 		return m, et.waitForActivity()
 
@@ -1078,11 +1161,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if killed := m.embTerm != nil && m.embTerm.killed; !killed {
 			if msg.err != nil {
 				m.statusMsg = "ssh exited with error: " + msg.err.Error()
+				// The session might be the thing that's actually broken
+				// (e.g. expired early server-side) rather than this one
+				// connection attempt — evict it so the next try creates a
+				// fresh one instead of replaying the same failure for up
+				// to bastionSessionTTLSeconds.
+				if m.activeSessionCacheKey != "" {
+					delete(m.bastionSessions, m.activeSessionCacheKey)
+				}
 			} else {
 				m.statusMsg = "ssh session closed"
 			}
 		}
 		m.embTerm = nil
+		m.activeSessionCacheKey = ""
 		m.mode = modeTable
 		return m, nil
 
@@ -1222,17 +1314,16 @@ func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promptInput.Focus()
 			m.mode = modePrompt
 		case pickerSSHMode:
-			if item.key == "direct" {
-				m.sshDirect = true
-				m.promptInput.SetValue("opc")
-				m.promptInput.CursorEnd()
-				m.promptInput.Focus()
-				m.mode = modePrompt
-				return m, nil
+			m.sshDirect = item.key == "direct"
+			return m.resolveSSHKey()
+		case pickerSSHKey:
+			for _, k := range m.sshKeyPairs {
+				if k.privateKeyPath == item.key {
+					m.sshKey = k
+					break
+				}
 			}
-			m.sshDirect = false
-			m.statusMsg = "looking for a bastion..."
-			return m, m.fetchBastions()
+			return m, m.continueSSHSetup()
 		case pickerResource:
 			for i, res := range m.resources {
 				if res.Key() != item.key {
@@ -1319,10 +1410,17 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeTable
 		if m.sshDirect {
 			m.statusMsg = "connecting directly to " + m.pendingRow.Name + "..."
-			return m, m.createDirectSession(m.pendingRow, username)
+			return m, m.createDirectSession(m.pendingRow, username, m.sshKey)
+		}
+		cacheKey := bastionSessionCacheKey(m.sshBastionID, m.pendingRow.ID, username)
+		if cached, ok := m.bastionSessions[cacheKey]; ok && time.Now().Add(bastionSessionReuseMargin).Before(cached.expiresAt) {
+			m.statusMsg = "reusing existing bastion session for " + m.pendingRow.Name + "..."
+			return m, func() tea.Msg {
+				return sessionReadyMsg{sshCmd: cached.sshCmd, cacheKey: cacheKey, expiresAt: cached.expiresAt}
+			}
 		}
 		m.statusMsg = "creating bastion session for " + m.pendingRow.Name + "..."
-		return m, m.createSession(m.sshBastionID, m.pendingRow, username)
+		return m, m.createSession(m.sshBastionID, m.pendingRow, username, m.sshKey)
 	}
 	var cmd tea.Cmd
 	m.promptInput, cmd = m.promptInput.Update(msg)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -77,25 +78,62 @@ func instancePrivateIP(ctx context.Context, factory *clients.Factory, s registry
 	return *vnicResp.PrivateIp, nil
 }
 
-// localSSHKeyPair finds a usable local SSH key pair, preferring modern
-// ed25519 keys over rsa. The bastion session is registered with the public
-// key; the private key path is substituted into the connection command the
-// API returns.
-func localSSHKeyPair() (pubKeyContent, privateKeyPath string, err error) {
+// sshKeyPair is one local key pair candidate for a bastion/direct session:
+// the public key content (registered with the bastion session) and the
+// private key path (substituted into the ssh command that connects with it).
+type sshKeyPair struct {
+	name           string // private key's filename under ~/.ssh — shown in the picker when there's more than one
+	pubKeyContent  string
+	privateKeyPath string
+}
+
+// listSSHKeyPairs finds every usable local SSH key pair in ~/.ssh: every
+// "*.pub" file that has a matching private key alongside it (whatever it's
+// named — e.g. an OCI console download like "ExascaleRAC-ssh-key-....key",
+// not just the conventional id_ed25519/id_rsa/id_ecdsa). There's no way to
+// tell from the filesystem alone which one a given target actually trusts,
+// so the caller asks when there's more than one instead of guessing.
+func listSSHKeyPairs() ([]sshKeyPair, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa"} {
-		priv := filepath.Join(home, ".ssh", name)
-		pub := priv + ".pub"
+	pubFiles, err := filepath.Glob(filepath.Join(home, ".ssh", "*.pub"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(pubFiles)
+	var pairs []sshKeyPair
+	for _, pub := range pubFiles {
+		priv := strings.TrimSuffix(pub, ".pub")
+		if _, statErr := os.Stat(priv); statErr != nil {
+			continue // a .pub with no private key alongside can't be connected with
+		}
 		content, readErr := os.ReadFile(pub)
 		if readErr != nil {
 			continue
 		}
-		return strings.TrimSpace(string(content)), priv, nil
+		pairs = append(pairs, sshKeyPair{name: filepath.Base(priv), pubKeyContent: strings.TrimSpace(string(content)), privateKeyPath: priv})
 	}
-	return "", "", fmt.Errorf("no SSH key pair found in ~/.ssh (looked for id_ed25519, id_rsa, id_ecdsa)")
+	if len(pairs) == 0 {
+		return nil, fmt.Errorf("no SSH key pair found in ~/.ssh (looked for a *.pub file with a matching private key)")
+	}
+	return pairs, nil
+}
+
+// bastionSessionTTLSeconds is the TTL every bastion session is created
+// with. Model.bastionSessions caches a created session's ssh command for
+// reuse up to this same window (minus a safety margin — see
+// bastionSessionReuseMargin), instead of creating a fresh session (and
+// burning one of the bastion's limited concurrent-session slots) on every
+// single reconnect to the same target+user.
+const bastionSessionTTLSeconds = 1800
+
+// bastionSessionCacheKey identifies a reusable session by exactly what OCI
+// scopes a managed SSH session to: one bastion, one target instance, one OS
+// user. A different port or IP isn't a dimension toci lets the user vary.
+func bastionSessionCacheKey(bastionID, instanceID, username string) string {
+	return bastionID + "|" + instanceID + "|" + username
 }
 
 // createBastionSession creates a managed-SSH bastion session and blocks
@@ -107,7 +145,7 @@ func createBastionSession(ctx context.Context, factory *clients.Factory, s regis
 		return oci_bastion.Session{}, err
 	}
 
-	ttl := 1800
+	ttl := bastionSessionTTLSeconds
 	createResp, err := client.CreateSession(ctx, oci_bastion.CreateSessionRequest{
 		CreateSessionDetails: oci_bastion.CreateSessionDetails{
 			BastionId: &bastionID,

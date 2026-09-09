@@ -16,6 +16,14 @@
 - OCPU가 아니라 ECPU 기반이라 `EnabledECpuCount`로 ECPU 컬럼을 넣었고, 뒤이어 "LICENSE(edition) 컬럼도 보고 싶다(BYOL로 생성함)"는 요청으로 `LicenseModel`(`BYOL`/`Included`) 컬럼도 추가 — Exascale 요약 타입엔 DB System과 달리 `DatabaseEdition` 필드 자체가 없어서, 실제로 있는 라이선스 모델 필드로 대체했다.
 - 다른 DB 계열 리소스(DB System/ADB/Exadata)와 동일하게 VCN 스코프(`vcnScopedResourceKeys`)에 포함시키고, VCN 다이어그램(`m` export) 렌더링에도 cylinder 노드로 추가.
 
+### Bastion 접속 SSH 키 선택 피커 + 세션 재사용
+
+로컬 `~/.ssh`에 여러 키가 있는 실사용 환경(jump-vm 생성 시 다운로드한 `ExascaleRAC-ssh-key-*.key` 등)에서, 기존 `localSSHKeyPair`가 고정된 3개 이름(`id_ed25519`/`id_rsa`/`id_ecdsa`)만 훑어 그중 먼저 찾은 걸 조용히 쓰던 문제를 사용자가 지적 — direct 접속(Bastion 없이 인스턴스 정적 `authorized_keys`로 인증)에서는 실제로 틀린 키를 쓰면 조용히 실패할 수 있었다.
+
+- `listSSHKeyPairs`: `~/.ssh/*.pub` 전체를 훑어서 짝이 되는 개인키가 실제 존재하는 것만 후보로 삼도록 교체(고정 이름 목록 제거). 후보가 1개면 자동 선택, 2개 이상이면 새 피커(`pickerSSHKey`)로 고르게 함 — SSH 모드(bastion/direct) 선택 직후 `resolveSSHKey()`에서 개입.
+- **Bastion 경유는 사실 아무 키나 써도 접속된다**는 걸 사용자와의 대화 중 재확인함 — toci가 만드는 건 `CreateManagedSshSessionTargetResourceDetails`(Managed SSH session)이고, 이건 대상 인스턴스의 "Bastion" Oracle Cloud Agent 플러그인이 세션 생성 시 넘긴 공개키를 세션 TTL 동안만 임시로 authorized_keys에 꽂아주는 방식이라, 정적 authorized_keys를 보는 direct 접속과 달리 어떤 로컬 키를 쓰든 상관없다. 그래도 UI 일관성을 위해 피커는 두 경로 모두에 적용.
+- **Bastion 세션 재사용**: 접속마다 무조건 새 `CreateSession`을 호출하던 것을 `(bastionID, instanceID, username)` 키로 세션의 ssh 명령 + 만료시각(TTL 1800초)을 `Model.bastionSessions`에 캐싱해 TTL 안에서는 재사용하도록 변경 — Bastion 하나당 동시 세션 수 기본 제한 초과(`LimitExceeded`)와, 매번 세션 ACTIVE 대기(수 초~수십 초)가 들던 비용을 줄임. 재사용 판정엔 2분 여유(`bastionSessionReuseMargin`)를 둬 만료 직전 세션은 새로 만들고, 재사용한 세션이 실제로 죽어 SSH가 에러로 끝나면 그 캐시 엔트리를 즉시 삭제해 같은 실패를 TTL 끝까지 반복하지 않게 함.
+
 ## v0.1.14
 
 ### 서브넷 IP RANGE 컬럼 + 사용 가능 호스트 수, AD 컬럼 제거

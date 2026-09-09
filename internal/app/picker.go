@@ -12,6 +12,7 @@ const (
 	pickerAction
 	pickerBastion
 	pickerSSHMode
+	pickerSSHKey
 	pickerResource
 )
 
