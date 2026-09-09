@@ -166,7 +166,12 @@ func buildSSHCommand(session oci_bastion.Session, privateKeyPath string) (string
 // instance's private IP, bypassing the Bastion service — for networks
 // (e.g. on-prem over FastConnect) that already reach the VCN directly.
 func buildDirectSSHCommand(username, privateIP, privateKeyPath string) string {
-	return fmt.Sprintf("ssh -i %q %s@%s", privateKeyPath, username, privateIP)
+	// ConnectTimeout: without a route to the target VCN (the whole reason
+	// Bastion exists), the TCP handshake to a private IP just hangs with
+	// no output at all rather than failing fast — this at least surfaces
+	// a visible error instead of leaving the embedded terminal looking
+	// frozen indefinitely.
+	return fmt.Sprintf("ssh -o ConnectTimeout=8 -i %q %s@%s", privateKeyPath, username, privateIP)
 }
 
 func intPtr(n int) *int       { return &n }

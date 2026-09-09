@@ -3,11 +3,8 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -67,6 +64,7 @@ const (
 	modeConfirm
 	modePrompt
 	modeSplash
+	modeEmbeddedTerm
 )
 
 type rowsMsg struct {
@@ -108,8 +106,6 @@ type sessionReadyMsg struct {
 	err    error
 }
 
-type sshDoneMsg struct{ err error }
-
 type Model struct {
 	factory   *clients.Factory
 	profile   string
@@ -139,6 +135,7 @@ type Model struct {
 	sshBastionID string
 	sshDirect    bool
 	promptInput  textinput.Model
+	embTerm      *embeddedTerm
 
 	mode      mode
 	loading   bool
@@ -228,12 +225,15 @@ type Model struct {
 func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, profile, version string) Model {
 	fi := textinput.New()
 	fi.Placeholder = "filter..."
+	fi.Prompt = "" // renderer draws its own "/" prefix
 
 	ci := textinput.New()
 	ci.Placeholder = "type resource name to confirm"
+	ci.Prompt = "" // renderConfirm draws its own "> " prefix
 
 	pi := textinput.New()
 	pi.Placeholder = "opc"
+	pi.Prompt = "" // renderPrompt draws its own "> " prefix
 
 	return Model{
 		factory:      factory,
@@ -361,36 +361,54 @@ func (m Model) createDirectSession(row registry.Row, username string) tea.Cmd {
 	}
 }
 
-// openInHerdrPane runs sshCmd in a new pane split off the current one via
-// herdr's socket API (see `herdr pane --help`) — splitting alone only opens
-// an empty shell, so the pane id it returns has to be fed into a second
-// "pane run" call to actually type the ssh command into it.
-func openInHerdrPane(sshCmd string) error {
-	out, err := exec.Command("herdr", "pane", "split", "--current", "--direction", "down", "--no-focus").Output()
-	if err != nil {
-		return err
+// embTermSize returns the cols/rows the embedded terminal should use to
+// exactly fill the space View() renders it into: mainContentWidth wide,
+// and the same vertical budget as the detail viewport minus one line for
+// the hint text rendered below it.
+func (m Model) embTermSize() (cols, rows int) {
+	// Rendered inside a bordered box (see renderEmbTermBox), same layout
+	// shape as the resource table box: tableBoxOverhead off the width
+	// (border+padding), and the same -9 off the height as m.tableHeight —
+	// box border (2) + a blank line + the hint line below it is exactly
+	// the same 4-line overhead the table box's own border+blank+status
+	// line accounts for.
+	cols = m.mainContentWidth() - tableBoxOverhead
+	rows = m.height - 9
+	if cols < 10 {
+		cols = 10
 	}
-	var resp struct {
-		Result struct {
-			Pane struct {
-				PaneID string `json:"pane_id"`
-			} `json:"pane"`
-		} `json:"result"`
+	if rows < 5 {
+		rows = 5
 	}
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("parse herdr pane split response: %w", err)
+	return cols, rows
+}
+
+// renderEmbTermBox wraps the embedded terminal's rendered content in the
+// same rounded-border box style as the resource table, with a centered
+// title — so an ssh session reads as its own window rather than the
+// table's frame just vanishing.
+func (m Model) renderEmbTermBox(content string) string {
+	// vt.Emulator.Render() trims each line at its last non-empty cell
+	// rather than padding to the full column count (fine for reading the
+	// text back out, but without an explicit Width here lipgloss shrinks
+	// the box to fit whatever's actually been printed so far — a mostly
+	// blank prompt collapses the whole box to a sliver).
+	cols, _ := m.embTermSize()
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ociBorder)).
+		Padding(0, 1).
+		Width(cols)
+	lines := strings.Split(style.Render(content), "\n")
+
+	title := titleStyle.Render(" SSH: " + m.pendingRow.Name + " ")
+	topWidth := ansi.StringWidth(lines[0])
+	x := (topWidth - ansi.StringWidth(title)) / 2
+	if x < 0 {
+		x = 0
 	}
-	paneID := resp.Result.Pane.PaneID
-	if paneID == "" {
-		return fmt.Errorf("herdr pane split: no pane id in response")
-	}
-	// "pane run" types its COMMAND... args, joined with spaces, into the
-	// pane's own interactive shell as one line — it doesn't exec them with
-	// argv preserved. So sshCmd must go in as a single already-complete
-	// shell command line, not split into ["sh", "-c", sshCmd]: that would
-	// hand the pane's shell "sh -c ssh -i ... -o ProxyCommand=\"...\" ...",
-	// where -c only grabs "ssh" and everything else is dropped.
-	return exec.Command("herdr", "pane", "run", paneID, sshCmd).Run()
+	lines[0] = embedInLine(lines[0], title, x)
+	return strings.Join(lines, "\n")
 }
 
 // newTable builds a fresh table.Model. Row-set swaps rebuild rather than
@@ -896,6 +914,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetHeight(m.tableHeight)
 		m.detail.Height = msg.Height - 7
 		m.relayout()
+		if m.embTerm != nil {
+			cols, rows := m.embTermSize()
+			m.embTerm.resize(cols, rows)
+		}
 		return m, nil
 
 	case splashTickMsg:
@@ -1031,40 +1053,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "ssh setup failed: " + msg.err.Error()
 			return m, nil
 		}
-		// Inside a multiplexer, open a new pane/window instead of taking
-		// over this one — toci's own TUI keeps running untouched. Outside
-		// one there's no way to show two full-screen programs in one
-		// terminal at once, so fall back to suspending toci for the ssh
-		// session (tea.ExecProcess already resumes it via sshDoneMsg once
-		// ssh exits).
-		if os.Getenv("HERDR_ENV") != "" {
-			if err := openInHerdrPane(msg.sshCmd); err != nil {
-				m.statusMsg = "herdr pane split failed: " + err.Error()
-				return m, nil
-			}
-			m.statusMsg = "ssh opened in new herdr pane"
-			return m, nil
-		}
-		if os.Getenv("TMUX") != "" {
-			if err := exec.Command("tmux", "new-window", msg.sshCmd).Start(); err != nil {
-				m.statusMsg = "tmux new-window failed: " + err.Error()
-				return m, nil
-			}
-			m.statusMsg = "ssh opened in new tmux window"
+		cols, rows := m.embTermSize()
+		et, err := startEmbeddedTerm(msg.sshCmd, cols, rows)
+		if err != nil {
+			m.statusMsg = "ssh setup failed: " + err.Error()
 			return m, nil
 		}
 		m.statusMsg = ""
-		c := exec.Command("sh", "-c", msg.sshCmd)
-		return m, tea.ExecProcess(c, func(err error) tea.Msg {
-			return sshDoneMsg{err: err}
-		})
+		m.embTerm = et
+		m.mode = modeEmbeddedTerm
+		return m, et.waitForActivity()
 
-	case sshDoneMsg:
-		if msg.err != nil {
-			m.statusMsg = "ssh exited with error: " + msg.err.Error()
-		} else {
-			m.statusMsg = "ssh session closed"
+	case embTermActivityMsg:
+		if m.embTerm == nil {
+			return m, nil
 		}
+		return m, m.embTerm.waitForActivity()
+
+	case embTermExitMsg:
+		// A ctrl+\ force-quit already set its own statusMsg and switched
+		// back to the table — the SIGKILL that triggers this message
+		// always surfaces as a "signal: killed" error from cmd.Wait(),
+		// which isn't an actual failure here, so leave that message alone.
+		if killed := m.embTerm != nil && m.embTerm.killed; !killed {
+			if msg.err != nil {
+				m.statusMsg = "ssh exited with error: " + msg.err.Error()
+			} else {
+				m.statusMsg = "ssh session closed"
+			}
+		}
+		m.embTerm = nil
+		m.mode = modeTable
 		return m, nil
 
 	case tea.KeyMsg:
@@ -1084,14 +1103,56 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirm(msg)
 		case modePrompt:
 			return m.updatePrompt(msg)
+		case modeEmbeddedTerm:
+			return m.updateEmbeddedTerm(msg)
 		default:
 			return m.updateTable(msg)
 		}
+
 	}
 
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
+}
+
+// updateEmbeddedTerm forwards every keystroke straight into the pty —
+// ctrl+\ is the one reserved escape hatch, force-quitting the session
+// (killing the child process) and returning to the table. There's no
+// detach/reattach: unlike tmux, a normal remote `exit` (embTermExitMsg)
+// is the expected way back.
+func (m Model) updateEmbeddedTerm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlBackslash {
+		if m.embTerm != nil {
+			// Leave m.embTerm set (just marked killed) rather than nil —
+			// the embTermExitMsg that follows shortly after needs to see
+			// the flag to know its "signal: killed" error isn't a real
+			// failure.
+			m.embTerm.close()
+		}
+		m.mode = modeTable
+		m.statusMsg = "ssh session force-quit"
+		return m, nil
+	}
+	// shift+up/down scrolls the scrollback locally instead of reaching the
+	// remote shell — reserved the same way ctrl+\ is.
+	if m.embTerm != nil {
+		switch msg.Type {
+		case tea.KeyShiftUp:
+			m.embTerm.scrollUp(3)
+			return m, nil
+		case tea.KeyShiftDown:
+			m.embTerm.scrollDown(3)
+			return m, nil
+		}
+	}
+	if m.embTerm != nil {
+		if b := keyMsgToBytes(msg); b != nil {
+			m.embTerm.resetScroll() // typing means "back to live", like a real terminal
+			_, _ = m.embTerm.pty.Write(b)
+		}
+	}
+	return m, nil
 }
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1566,6 +1627,18 @@ func (m Model) View() string {
 
 	case modePrompt:
 		main.WriteString(m.renderPrompt())
+
+	case modeEmbeddedTerm:
+		if m.embTerm != nil {
+			_, rows := m.embTermSize()
+			main.WriteString(m.renderEmbTermBox(m.embTerm.render(rows)))
+			main.WriteString("\n")
+		}
+		hint := "ctrl+\\: force-quit · shift+↑/↓: scroll"
+		if m.embTerm != nil && m.embTerm.scrollback > 0 {
+			hint += fmt.Sprintf(" · scrolled back %d lines (shift+↓ to return)", m.embTerm.scrollback)
+		}
+		main.WriteString(statusStyle.Render(hint))
 
 	default:
 		switch {
