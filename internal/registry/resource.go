@@ -138,3 +138,10 @@ func stateLabel[T ~string](s T) string {
 	}
 	return strings.Join(words, " ")
 }
+
+// StateLabel is stateLabel exported for the app package (e.g. the Exascale
+// node tree), which renders a node's own LifecycleState outside any Column
+// Get closure defined in this package.
+func StateLabel[T ~string](s T) string {
+	return stateLabel(s)
+}

@@ -78,6 +78,156 @@ func instancePrivateIP(ctx context.Context, factory *clients.Factory, s registry
 	return *vnicResp.PrivateIp, nil
 }
 
+// targetPrivateIP resolves the private IP an ssh session ultimately
+// connects to. An Exascale DB node (row.Raw is exascaleNodeRow, built by
+// the "g" node tree) already carries its own host IP — no extra API call.
+// Anything else is treated as a plain Compute instance, resolved live via
+// instancePrivateIP.
+func targetPrivateIP(ctx context.Context, factory *clients.Factory, s registry.Scope, row registry.Row) (string, error) {
+	if n, ok := row.Raw.(exascaleNodeRow); ok {
+		if n.ip == "" {
+			return "", fmt.Errorf("db node has no resolved host IP")
+		}
+		return n.ip, nil
+	}
+	return instancePrivateIP(ctx, factory, s, row.ID)
+}
+
+// jumpInstance is the plain Compute instance a bastion's managed-SSH
+// sessions target when the real destination is an Exascale DB node one
+// more network hop away — see findJumpInstance.
+type jumpInstance struct {
+	id string
+}
+
+// jumpHostNamePatterns is what findJumpInstance matches a candidate
+// instance's display name against, case-insensitively.
+var jumpHostNamePatterns = []string{"jump", "bastion"}
+
+// findJumpInstance finds the Compute instance a bastion's managed-SSH
+// sessions should target when the real destination is an Exascale DB
+// node: OCI Bastion has no notion of an Exadata VM Cluster as a session
+// target (confirmed live — CreateSession 404s on a cluster OCID with
+// "NotAuthorizedOrNotFound"), so an Exascale connection instead goes
+// bastion -> a jump instance living in the bastion's own VCN -> the DB
+// node (one more plain ssh hop — see buildChainedSSHCommand), mirroring
+// how these environments are actually wired by hand. The jump instance
+// is identified by name (jumpHostNamePatterns) among instances in the
+// bastion's own VCN, within the currently browsed compartment — the
+// first match wins if there's more than one.
+func findJumpInstance(ctx context.Context, factory *clients.Factory, s registry.Scope, bastionID string) (jumpInstance, error) {
+	bClient, err := factory.Bastion(s.Region)
+	if err != nil {
+		return jumpInstance{}, err
+	}
+	b, err := bClient.GetBastion(ctx, oci_bastion.GetBastionRequest{BastionId: &bastionID})
+	if err != nil {
+		return jumpInstance{}, err
+	}
+	if b.TargetVcnId == nil {
+		return jumpInstance{}, fmt.Errorf("bastion has no target VCN")
+	}
+
+	compute, err := factory.Compute(s.Region)
+	if err != nil {
+		return jumpInstance{}, err
+	}
+	vnClient, err := factory.VirtualNetwork(s.Region)
+	if err != nil {
+		return jumpInstance{}, err
+	}
+
+	resp, err := compute.ListInstances(ctx, core.ListInstancesRequest{CompartmentId: &s.CompartmentID})
+	if err != nil {
+		return jumpInstance{}, err
+	}
+	for _, inst := range resp.Items {
+		name := strings.ToLower(deref(inst.DisplayName))
+		matched := false
+		for _, p := range jumpHostNamePatterns {
+			if strings.Contains(name, p) {
+				matched = true
+				break
+			}
+		}
+		if !matched || inst.Id == nil {
+			continue
+		}
+		vcnID, err := instanceVcnID(ctx, compute, vnClient, s, *inst.Id)
+		if err == nil && vcnID == *b.TargetVcnId {
+			return jumpInstance{id: *inst.Id}, nil
+		}
+	}
+	return jumpInstance{}, fmt.Errorf("no instance named %q found in the bastion's VCN", strings.Join(jumpHostNamePatterns, "\"/\""))
+}
+
+// instanceVcnID resolves an instance's VCN via its primary VNIC's subnet —
+// same VNIC-attachment walk as instancePrivateIP, one step further.
+func instanceVcnID(ctx context.Context, compute core.ComputeClient, vnClient core.VirtualNetworkClient, s registry.Scope, instanceID string) (string, error) {
+	attResp, err := compute.ListVnicAttachments(ctx, core.ListVnicAttachmentsRequest{
+		CompartmentId: &s.CompartmentID,
+		InstanceId:    &instanceID,
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, a := range attResp.Items {
+		if a.LifecycleState != core.VnicAttachmentLifecycleStateAttached || a.VnicId == nil {
+			continue
+		}
+		vnic, err := vnClient.GetVnic(ctx, core.GetVnicRequest{VnicId: a.VnicId})
+		if err != nil || vnic.SubnetId == nil {
+			continue
+		}
+		subnet, err := vnClient.GetSubnet(ctx, core.GetSubnetRequest{SubnetId: vnic.SubnetId})
+		if err != nil {
+			continue
+		}
+		return deref(subnet.VcnId), nil
+	}
+	return "", fmt.Errorf("instance has no attached VNIC")
+}
+
+// buildChainedSSHCommand builds the two-extra-hop path a DB node connection
+// needs (local -> bastion endpoint -> jump instance -> DB node) as a
+// throwaway ssh config file rather than nested `-o ProxyCommand="..."`
+// shell quoting — nesting three levels of that would need alternating
+// quote styles and is easy to get subtly wrong, where three plain Host
+// stanzas chained by ProxyJump are exactly what a human would hand-write
+// for the same path (and exactly what this tenancy's own ~/.ssh/config
+// does). The file is left behind under the OS temp dir rather than
+// cleaned up — it holds no secret (a path reference and a bastion session
+// OCID, not key material), and normal temp-dir reaping handles it.
+func buildChainedSSHCommand(session oci_bastion.Session, region, jumpIP, nodeIP, username, privateKeyPath string) (string, error) {
+	if session.Id == nil {
+		return "", fmt.Errorf("session has no id")
+	}
+	f, err := os.CreateTemp("", "toci-ssh-config-*")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	const stanza = `Host %s
+    HostName %s
+    User %s
+    IdentityFile %s
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    ServerAliveInterval 60
+    ServerAliveCountMax 3%s
+
+`
+	config := fmt.Sprintf(stanza, "toci-bastion", "host.bastion."+region+".oci.oraclecloud.com", *session.Id, privateKeyPath, "") +
+		fmt.Sprintf(stanza, "toci-jump", jumpIP, username, privateKeyPath, "\n    ProxyJump toci-bastion") +
+		fmt.Sprintf(stanza, "toci-target", nodeIP, username, privateKeyPath, "\n    ProxyJump toci-jump")
+
+	if _, err := f.WriteString(config); err != nil {
+		return "", err
+	}
+	return "ssh -F " + f.Name() + " toci-target", nil
+}
+
 // sshKeyPair is one local key pair candidate for a bastion/direct session:
 // the public key content (registered with the bastion session) and the
 // private key path (substituted into the ssh command that connects with it).

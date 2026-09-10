@@ -2,6 +2,25 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.17
+
+### Exascale 클러스터 노드 트리 (`g` 키) + IP/MEM/OCPU/DISK% 컬럼
+
+- 사용자가 "exascale 리소스테이블도 g를 누르면 클러스터 밑에 트리형태로 노드정보가 나왔으면 좋겠다(서브넷을 VCN으로 그룹핑한 것처럼)"고 요청 → `internal/app/exascale_tree.go` 신규. `vcn_tree.go`의 합성 헤더 방식과 달리, 부모(클러스터)가 실물 리소스라 실제 클러스터 행 바로 뒤에 노드 자식 행을 삽입하는 구조로 구현.
+- `registry.ExadbVmClusterRow.Nodes []database.DbNodeSummary` 추가 — 상태 문자열만 뽑던 `fetchDbNodeStates`를 전체 summary를 반환하는 `fetchDbNodes`로 쪼개고 그 위에 얇게 재구성.
+- **IP 컬럼 정정**: 처음엔 노드마다 VNIC의 private IP를 썼는데, 사용자가 "g 누르기 전 클러스터 행의 IP는 SCAN IP, g 누른 후 노드별 IP는 host IP여야 한다"고 지적 → 클러스터 행은 `ScanIpIds`, 노드 행은 `DbNodeSummary.HostIpId`를 각각 `GetPrivateIp`로 해석.
+- **MEM(GB)/OCPU**: "ecpu 16, memory 44gb인데 vm당 8 ECPU로 만들었다, 메모리도 노드 수로 나눠야 하나?"라는 질문에 실측으로 답함 — `EnabledECpuCount`/`MemorySizeInGBs`는 클러스터 전체 합산값(8×2=16, 44÷2=실제 노드별 22GB와 일치)이라는 걸 확인하고, 클러스터 행엔 총합 `MEM(GB)`을, 노드 트리엔 노드별 `OCPU`/`MEM(GB)`을 추가.
+- **DISK%**: "161/300 GB 디스크 사용량을 %로" 요청 → 이 수치가 클러스터 자체가 아니라 연결된 공유 스토리지 볼트(`GetExascaleDbStorageVault`)의 Total/Available이고 161은 Available이지 Used가 아니었다는 걸 실측으로 확인, `(Total-Available)/Total*100`으로 `DISK%` 컬럼 추가.
+- `hub-and-spoke`/`vcn-db`의 실제 `ExascaleRAC`(노드 2개)로 매 단계 라이브 검증.
+
+### Exascale DB 노드 SSH 접속 (bastion → jump host → node 체이닝)
+
+- 사용자가 "인스턴스는 Bastion으로 잘 붙는데 Exascale DB 노드에도 접속하고 싶다"며 설계를 제시(노드가 속한 VCN에 bastion이 있으면 그걸로 직접 세션, 없으면 hub VCN의 bastion 사용) → 구현 전 실증 테스트로 **OCI Bastion이 `ExadbVmCluster` OCID를 세션 타겟으로 아예 지원하지 않는다**는 걸 먼저 확인(`CreateSession` → `404 NotAuthorizedOrNotFound`, bastion이 어느 VCN에 있든 마찬가지). 실제 세션 이력을 까보니 지금까지 toci가 만든 세션은 전부 "jump-vm"이라는 평범한 컴퓨트 인스턴스(hub VCN)를 타겟으로 하고 있었고, DB 노드까지는 그 너머로 별도 SSH 홉이 필요했다 — 사용자의 `~/.ssh/config`가 이미 그 구조(`bastion` → `jump` → 노드 IP대역)를 쓰고 있었음.
+- 설계를 **Bastion 세션(jump 인스턴스 타겟) → 체이닝된 두 번째 ssh 홉(jump → DB노드)**으로 정정. jump 인스턴스는 bastion이 속한 VCN 안에서 이름에 `jump`/`bastion`이 들어간 것을 찾음(`findJumpInstance`, 검색 범위는 현재 브라우징 중인 컴파트먼트로 한정 — 사용자 확인 결과 이 환경엔 충분).
+- 체이닝은 3단 중첩 `-o ProxyCommand="..."` 쿼팅(따옴표 스타일을 번갈아 써야 해서 실수하기 쉬움) 대신, `toci-bastion`/`toci-jump`/`toci-target` 3단 `Host`+`ProxyJump` 스탠자를 담은 임시 ssh config 파일(`buildChainedSSHCommand`)로 생성 — 사람이 직접 쓰는 `~/.ssh/config`와 구조가 동일해 쿼팅 실수 여지가 없다.
+- SSH 키는 사용자 결정대로 한 번만 선택해서 jump 세션 생성(필요시)과 DB노드 최종 인증 양쪽에 재사용 — 재사용한 세션이 다른 키를 거부하는 경우는 기존 `embTermExitMsg`의 quickFail 자동 재시도가 그대로 커버(추가 코드 불필요).
+- 실제 `HubBastion`에 세션을 새로 만들어 `ExascaleRAC-ssh-key`로 jump-vm 경유 DB 노드까지 SSH 성공(`hostname`/`uptime` 실행 결과 확인) — 검증에 쓴 세션은 즉시 삭제.
+
 ## v0.1.16
 
 ### Bastion 세션 연결 대기 스피너

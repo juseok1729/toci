@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	oci_bastion "github.com/oracle/oci-go-sdk/v65/bastion"
 	"github.com/sahilm/fuzzy"
 	"gopkg.in/yaml.v3"
 
@@ -287,6 +288,12 @@ type Model struct {
 	// fetched lazily by fetchVcnNames the first time groupByVcn turns on.
 	// Invalidated (set nil) on every compartment change.
 	vcnNames map[string]string
+
+	// exascaleNodeTree toggles ("g" key) expanding each Exadata VM cluster
+	// (Exascale) row into a tree with its DB nodes as children — the node
+	// data already rides along on ExadbVmClusterRow.Nodes from List, so
+	// unlike groupByVcn this needs no extra fetch/cache.
+	exascaleNodeTree bool
 }
 
 func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, profile, version string) Model {
@@ -400,6 +407,9 @@ func (m Model) fetchBastions() tea.Cmd {
 // second lookup would just find the same session again and fail the same
 // way.
 func (m Model) createSession(bastionID string, row registry.Row, username string, key sshKeyPair, skipReuse bool) tea.Cmd {
+	if node, ok := row.Raw.(exascaleNodeRow); ok {
+		return m.createExascaleNodeSession(bastionID, row, node, username, key, skipReuse)
+	}
 	factory := m.factory
 	scope := m.scope
 	return func() tea.Msg {
@@ -436,8 +446,68 @@ func (m Model) createSession(bastionID string, row registry.Row, username string
 	}
 }
 
+// createExascaleNodeSession is createSession's Exascale counterpart. OCI
+// Bastion has no notion of an Exadata VM Cluster as a session target
+// (confirmed live — CreateSession 404s "NotAuthorizedOrNotFound" on a
+// cluster OCID), so this creates/reuses a bastion session against the
+// "jump" Compute instance sitting in the bastion's own VCN
+// (findJumpInstance) instead, then chains one more plain ssh hop from that
+// jump instance to the DB node's own host IP (buildChainedSSHCommand) —
+// exactly the two-hop path this tenancy's own ~/.ssh/config already proves
+// out by hand (bastion -> jump -> node). skipReuse mirrors createSession's.
+func (m Model) createExascaleNodeSession(bastionID string, row registry.Row, node exascaleNodeRow, username string, key sshKeyPair, skipReuse bool) tea.Cmd {
+	factory := m.factory
+	scope := m.scope
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		if node.ip == "" {
+			return sessionReadyMsg{err: fmt.Errorf("db node has no resolved host IP")}
+		}
+
+		jump, err := findJumpInstance(ctx, factory, scope, bastionID)
+		if err != nil {
+			return sessionReadyMsg{err: fmt.Errorf("find jump host: %w", err)}
+		}
+		jumpIP, err := instancePrivateIP(ctx, factory, scope, jump.id)
+		if err != nil {
+			return sessionReadyMsg{err: fmt.Errorf("resolve jump host private IP: %w", err)}
+		}
+
+		// Cache key stays row.ID-based (the DB node's own identity), same
+		// as the local fast-path check in updatePrompt — the bastion
+		// session it maps to is scoped to the shared jump host, so several
+		// different nodes' cache entries can legitimately point at (and
+		// reuse) that one same session.
+		cacheKey := bastionSessionCacheKey(bastionID, row.ID, username)
+
+		var session oci_bastion.Session
+		var expiresAt time.Time
+		reused := false
+		if !skipReuse {
+			if existing, exp, ok := findReusableSession(ctx, factory, scope, bastionID, jump.id, username); ok {
+				session, expiresAt, reused = existing, exp, true
+			}
+		}
+		if !reused {
+			createdAt := time.Now()
+			session, err = createBastionSession(ctx, factory, scope, bastionID, jump.id, jumpIP, username, key.pubKeyContent)
+			if err != nil {
+				return sessionReadyMsg{err: fmt.Errorf("create bastion session: %w", err)}
+			}
+			expiresAt = createdAt.Add(bastionSessionTTLSeconds * time.Second)
+		}
+
+		sshCmd, err := buildChainedSSHCommand(session, scope.Region, jumpIP, node.ip, username, key.privateKeyPath)
+		if err != nil {
+			return sessionReadyMsg{err: err}
+		}
+		return sessionReadyMsg{sshCmd: sshCmd, cacheKey: cacheKey, expiresAt: expiresAt, reused: reused}
+	}
+}
+
 // createDirectSession skips the OCI Bastion service entirely and ssh's
-// straight to the instance's private IP with the already-resolved local
+// straight to the target's private IP with the already-resolved local
 // key — useful when the caller's network already reaches the VCN directly
 // (e.g. on-prem over FastConnect) and a bastion hop isn't needed. There's no
 // server-side session resource here, so nothing to cache.
@@ -447,9 +517,9 @@ func (m Model) createDirectSession(row registry.Row, username string, key sshKey
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		privateIP, err := instancePrivateIP(ctx, factory, scope, row.ID)
+		privateIP, err := targetPrivateIP(ctx, factory, scope, row)
 		if err != nil {
-			return sessionReadyMsg{err: fmt.Errorf("resolve instance private IP: %w", err)}
+			return sessionReadyMsg{err: fmt.Errorf("resolve target private IP: %w", err)}
 		}
 		return sessionReadyMsg{sshCmd: buildDirectSSHCommand(username, privateIP, key.privateKeyPath)}
 	}
@@ -692,6 +762,9 @@ func (m *Model) setDisplayRows() {
 	if m.groupingActive() {
 		rows = groupRowsByVcn(rows, m.vcnNames)
 	}
+	if m.exascaleNodeTreeActive() {
+		rows = expandExascaleNodes(rows)
+	}
 	m.displayRows = rows
 	m.refreshTable(m.displayRows)
 }
@@ -793,6 +866,12 @@ func (m Model) groupingActive() bool {
 	return m.groupByVcn && m.current().Key() == "subnet" && m.scope.VcnID == ""
 }
 
+// exascaleNodeTreeActive reports whether the "g" node tree should apply:
+// only the Exascale view (see exascaleNodeTree's doc comment).
+func (m Model) exascaleNodeTreeActive() bool {
+	return m.exascaleNodeTree && m.current().Key() == "exascale"
+}
+
 // displayColumns is m.current().Columns(), tree-decorated (see vcn_tree.go)
 // when groupingActive — the single source of truth for table shape, so
 // refreshTable and relayoutTableColumns never disagree on column count
@@ -800,10 +879,13 @@ func (m Model) groupingActive() bool {
 // inside bubbles/table).
 func (m *Model) displayColumns() []registry.Column {
 	cols := m.current().Columns()
-	if !m.groupingActive() {
-		return cols
+	if m.groupingActive() {
+		return treeColumns(cols, treeGlyphs(m.displayRows))
 	}
-	return treeColumns(cols, treeGlyphs(m.displayRows))
+	if m.exascaleNodeTreeActive() {
+		return exascaleTreeColumns(cols, exascaleTreeGlyphs(m.displayRows))
+	}
+	return cols
 }
 
 // fetchVcnNames lists every VCN in the current compartment and returns a
@@ -1569,27 +1651,44 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "g":
-		if m.current().Key() != "subnet" || m.scope.VcnID != "" {
+		switch m.current().Key() {
+		case "subnet":
+			if m.scope.VcnID != "" {
+				return m, nil
+			}
+			m.groupByVcn = !m.groupByVcn
+			var cmd tea.Cmd
+			if m.groupByVcn {
+				m.statusMsg = "group by vcn: on"
+				if m.vcnNames == nil {
+					cmd = m.fetchVcnNames()
+				}
+			} else {
+				m.statusMsg = "group by vcn: off"
+			}
+			m.setDisplayRows()
+			return m, cmd
+
+		case "exascale":
+			m.exascaleNodeTree = !m.exascaleNodeTree
+			if m.exascaleNodeTree {
+				m.statusMsg = "show nodes: on"
+			} else {
+				m.statusMsg = "show nodes: off"
+			}
+			m.setDisplayRows()
 			return m, nil
 		}
-		m.groupByVcn = !m.groupByVcn
-		var cmd tea.Cmd
-		if m.groupByVcn {
-			m.statusMsg = "group by vcn: on"
-			if m.vcnNames == nil {
-				cmd = m.fetchVcnNames()
-			}
-		} else {
-			m.statusMsg = "group by vcn: off"
-		}
-		m.setDisplayRows()
-		return m, cmd
+		return m, nil
 
 	case "e":
 		path := exportFilename(m.current().Key(), time.Now())
 		rows := m.displayRows
 		if m.groupingActive() {
 			rows = filterOutGroupHeaders(rows)
+		}
+		if m.exascaleNodeTreeActive() {
+			rows = filterOutExascaleNodes(rows)
 		}
 		if err := exportCSV(path, m.current().Columns(), rows); err != nil {
 			m.statusMsg = "export failed: " + err.Error()
@@ -1637,12 +1736,19 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "ssh disabled (readonly mode; pass --write to enable)"
 			return m, nil
 		}
-		if m.current().Key() != "instance" {
+		resKey := m.current().Key()
+		if resKey != "instance" && resKey != "exascale" {
 			return m, nil
 		}
 		row, ok := m.selected()
 		if !ok {
 			return m, nil
+		}
+		if resKey == "exascale" {
+			if _, isNode := row.Raw.(exascaleNodeRow); !isNode {
+				m.statusMsg = "select a DB node (press \"g\" to expand the node tree) to ssh"
+				return m, nil
+			}
 		}
 		m.pendingRow = row
 		m.picker = newPicker(pickerSSHMode, "ssh: "+row.Name, []pickerItem{
@@ -2062,6 +2168,13 @@ func (m Model) helpEntries() []helpEntry {
 			add("g", "group by vcn: off")
 		}
 	}
+	if m.current().Key() == "exascale" {
+		if m.exascaleNodeTree {
+			add("g", "show nodes: on")
+		} else {
+			add("g", "show nodes: off")
+		}
+	}
 	add("e", "export csv")
 	if m.vcnFilterName != "" {
 		add("m", "export diagram")
@@ -2073,7 +2186,7 @@ func (m Model) helpEntries() []helpEntry {
 			add("a", "actions (readonly)")
 		}
 	}
-	if m.current().Key() == "instance" {
+	if m.current().Key() == "instance" || (m.current().Key() == "exascale" && m.exascaleNodeTreeActive()) {
 		if m.writeEnabled {
 			add("s", "ssh")
 		} else {
