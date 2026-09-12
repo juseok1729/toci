@@ -3,8 +3,8 @@ package app
 import (
 	"testing"
 
-	"github.com/charmbracelet/bubbles/table"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/table"
+	tea "charm.land/bubbletea/v2"
 
 	"toci/internal/registry"
 )
@@ -43,13 +43,13 @@ func TestUpdateMouseWheelMovesCursor(t *testing.T) {
 	m.table.SetColumns([]table.Column{{Title: "NAME", Width: 5}})
 	m.table.SetRows([]table.Row{{"a"}, {"b"}, {"c"}})
 
-	mm, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	mm, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m2 := mm.(Model)
 	if got, want := m2.table.Cursor(), 1; got != want {
 		t.Errorf("cursor after wheel-down = %d, want %d", got, want)
 	}
 
-	mm2, _ := m2.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	mm2, _ := m2.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	m3 := mm2.(Model)
 	if got, want := m3.table.Cursor(), 0; got != want {
 		t.Errorf("cursor after wheel-up = %d, want %d", got, want)
@@ -105,7 +105,7 @@ func TestUpdatePickerMouseClickSelectsAndConfirms(t *testing.T) {
 	// (2, 5) screen offset — see updatePickerMouse — with its own top
 	// border on the first line, so item i lands at boxY + 1 + itemsTop + i.
 	clickY := 5 + 1 + pickerRegularItemsTop + 1 // second item ("us-phoenix-1")
-	mm, cmd := m.Update(tea.MouseMsg{X: 4, Y: clickY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	mm, cmd := m.Update(tea.MouseClickMsg{X: 4, Y: clickY, Button: tea.MouseLeft})
 	m2 := mm.(Model)
 
 	if m2.mode != modeTable {

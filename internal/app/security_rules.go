@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/charmbracelet/lipgloss"
-	ltable "github.com/charmbracelet/lipgloss/table"
+	"charm.land/lipgloss/v2"
+	ltable "charm.land/lipgloss/v2/table"
 	"github.com/oracle/oci-go-sdk/v65/core"
 
 	"toci/internal/registry"

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 func TestEditionStyleForExactMatchNotSubstring(t *testing.T) {
