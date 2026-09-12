@@ -51,7 +51,7 @@ func main() {
 			scope := registry.Scope{Region: region, CompartmentID: tenancyID}
 			m := app.New(factory, scope, write, profile, version)
 
-			_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
+			_, err = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 			return err
 		},
 	}
