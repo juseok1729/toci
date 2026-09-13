@@ -53,6 +53,40 @@ func TestMKeyOnVcnRowBuildsResourceMapWithoutFiltering(t *testing.T) {
 	}
 }
 
+// TestSelectVcnFilterFollowsRowsOwnCompartment reproduces a reported bug:
+// with subtree mode ("C") on, a VCN row can come from a sub-compartment
+// other than m.scope.CompartmentID (the fan-out's base) — registry.Row's
+// CompartmentID carries the row's real compartment in that case. Every
+// VCN-dependent fetch (subnet/route-table lists, "m"'s diagram, "M"'s
+// resource map) filters by both CompartmentId and VcnId, so leaving
+// m.scope.CompartmentID at the fan-out base returned zero subnets/route
+// tables/gateways for such a VCN — selectVcnFilter must follow the row's
+// own compartment when it's known.
+func TestSelectVcnFilterFollowsRowsOwnCompartment(t *testing.T) {
+	m := &Model{resources: registry.All(nil), scope: registry.Scope{Region: "us-ashburn-1", CompartmentID: "base"}}
+	m.selectVcnFilter("vcn1", "my-vcn", "sub1")
+
+	if m.scope.CompartmentID != "sub1" {
+		t.Errorf("scope.CompartmentID = %q, want %q (the VCN row's own compartment)", m.scope.CompartmentID, "sub1")
+	}
+	if m.scope.VcnID != "vcn1" || m.vcnFilterName != "my-vcn" {
+		t.Errorf("VcnID/vcnFilterName = %q/%q, want vcn1/my-vcn", m.scope.VcnID, m.vcnFilterName)
+	}
+}
+
+// TestSelectVcnFilterKeepsScopeWithoutSubtree is the non-subtree case
+// (registry.Row.CompartmentID empty): m.scope.CompartmentID is already the
+// VCN's own compartment (normal browsing, no fan-out), so it must be left
+// alone rather than blanked out.
+func TestSelectVcnFilterKeepsScopeWithoutSubtree(t *testing.T) {
+	m := &Model{resources: registry.All(nil), scope: registry.Scope{Region: "us-ashburn-1", CompartmentID: "base"}}
+	m.selectVcnFilter("vcn1", "my-vcn", "")
+
+	if m.scope.CompartmentID != "base" {
+		t.Errorf("scope.CompartmentID = %q, want unchanged %q", m.scope.CompartmentID, "base")
+	}
+}
+
 func previewData() resourceMapData {
 	return resourceMapData{
 		vcnName: "hub-and-spoke",

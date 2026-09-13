@@ -42,10 +42,17 @@ type resourceMapData struct {
 // under the cursor there. Neither touches m.scope.VcnID/m.vcnFilterName
 // themselves, so viewing a map this way doesn't also change the active
 // filter.
-func (m Model) buildResourceMap(vcnID, vcnName string) tea.Cmd {
+//
+// compartmentID is the VCN's own compartment, which during a subtree
+// fan-out ("C") can differ from m.scope.CompartmentID (the fan-out's base
+// compartment) — every fetch below filters by both CompartmentId and
+// VcnId, so using the wrong one silently returns zero subnets/route
+// tables/gateways instead of an error.
+func (m Model) buildResourceMap(vcnID, vcnName, compartmentID string) tea.Cmd {
 	factory := m.factory
 	scope := m.scope
 	scope.VcnID = vcnID
+	scope.CompartmentID = compartmentID
 	return func() tea.Msg {
 		data, err := fetchResourceMapData(context.Background(), factory, scope, vcnName)
 		if err != nil {

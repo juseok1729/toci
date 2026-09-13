@@ -1124,15 +1124,30 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 // then opens the resource search so the user can jump straight to one of
 // them. It doesn't switch resource or reload itself: nothing needs
 // fetching until a specific resource is picked.
-func (m *Model) selectVcnFilter(id, name string) {
+//
+// compartmentID is the row's own compartment (registry.Row.CompartmentID) —
+// non-empty only while a subtree fan-out is active and this VCN came from a
+// sub-compartment other than the one currently in m.scope. Every
+// VCN-dependent fetch (subnet/route-table lists, the "m" diagram, the "M"
+// resource map) filters by both CompartmentId and VcnId, so leaving
+// m.scope.CompartmentID at the fan-out's base compartment would silently
+// return zero rows for a VCN that lives deeper in the tree.
+func (m *Model) selectVcnFilter(id, name, compartmentID string) {
+	if compartmentID != "" {
+		m.scope.CompartmentID = compartmentID
+	}
 	m.scope.VcnID = id
 	m.vcnFilterName = name
 	m.openResourceSearch()
 }
 
 // selectDrgFilter is selectVcnFilter's DRG analog — triggered by "i" or
-// Enter on a DRG row, scopes DrgAttachments to this DRG.
-func (m *Model) selectDrgFilter(id, name string) {
+// Enter on a DRG row, scopes DrgAttachments to this DRG. See
+// selectVcnFilter's compartmentID doc.
+func (m *Model) selectDrgFilter(id, name, compartmentID string) {
+	if compartmentID != "" {
+		m.scope.CompartmentID = compartmentID
+	}
 	m.scope.DrgID = id
 	m.drgFilterName = name
 	m.openResourceSearch()
@@ -1429,6 +1444,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openDetailContent(renderResourceMap(msg.data, m.resourceMapSelected))
 		return m, nil
 
+	case nsgRulesMsg:
+		if msg.err != nil {
+			m.statusMsg = "nsg rules failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.statusMsg = ""
+		m.mode = modeDetail
+		m.detail.SetContent(renderSecurityRules(msg.name, msg.records))
+		m.detail.GotoTop()
+		m.detailExport = &detailExportData{
+			filenameSuffix: "nsg-rules-" + msg.name,
+			header:         securityRuleHeaders,
+			records:        msg.records,
+		}
+		return m, nil
+
+	case drgRouteRulesMsg:
+		if msg.err != nil {
+			m.statusMsg = "drg route rules failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.statusMsg = ""
+		m.mode = modeDetail
+		m.detail.SetContent(renderDrgRouteRules(msg.name, msg.records))
+		m.detail.GotoTop()
+		m.detailExport = &detailExportData{
+			filenameSuffix: "drg-route-rules-" + msg.name,
+			header:         drgRouteRuleHeaders,
+			records:        msg.records,
+		}
+		return m, nil
+
 	case bastionsMsg:
 		if msg.err != nil {
 			m.statusMsg = "list bastions failed: " + msg.err.Error()
@@ -1603,10 +1650,10 @@ func (m Model) updateEmbeddedTerm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q", "v":
-		// "v" toggles: it opened this rules view (security-list/route-table
-		// — see updateTable's "v" case), so pressing it again closes the
-		// same way esc/q already do, rather than needing a different key
-		// to back out of what "v" got you into.
+		// "v" toggles: it opened this rules view (security-list/route-table/
+		// nsg/drg-route-table — see updateTable's "v" case), so pressing it
+		// again closes the same way esc/q already do, rather than needing a
+		// different key to back out of what "v" got you into.
 		m.mode = modeTable
 		wasResourceMap := m.resourceMap != nil
 		m.resourceMap = nil
@@ -2218,20 +2265,32 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key == "vcn" {
-			m.selectVcnFilter(row.ID, row.Name)
+			m.selectVcnFilter(row.ID, row.Name, row.CompartmentID)
 		} else {
-			m.selectDrgFilter(row.ID, row.Name)
+			m.selectDrgFilter(row.ID, row.Name, row.CompartmentID)
 		}
 		return m, nil
 
 	case "v":
 		resKey := m.current().Key()
-		if resKey != "security-list" && resKey != "route-table" {
+		if resKey != "security-list" && resKey != "route-table" && resKey != "nsg" && resKey != "drg-route-table" {
 			return m, nil
 		}
 		row, ok := m.selected()
 		if !ok {
 			return m, nil
+		}
+		if resKey == "nsg" || resKey == "drg-route-table" {
+			// Unlike a Security List/Route Table (rules are embedded fields
+			// on the resource itself, so its "v" is instant), NSG and DRG
+			// Route Table rules are their own resource behind a separate
+			// List call — needs a tea.Cmd like buildResourceMap, not the
+			// synchronous path below.
+			m.statusMsg = "loading rules..."
+			if resKey == "nsg" {
+				return m, m.buildNsgRulesCmd(row)
+			}
+			return m, m.buildDrgRouteRulesCmd(row)
 		}
 		var content string
 		var records [][]string
@@ -2275,15 +2334,19 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if !ok {
 				return m, nil
 			}
+			compartmentID := row.CompartmentID
+			if compartmentID == "" {
+				compartmentID = m.scope.CompartmentID
+			}
 			m.statusMsg = "building resource map..."
-			return m, m.buildResourceMap(row.ID, row.Name)
+			return m, m.buildResourceMap(row.ID, row.Name, compartmentID)
 		}
 		if m.vcnFilterName == "" {
 			m.statusMsg = "pick a VCN first (\"i\" on a VCN row, or from the VCN table) to view its resource map"
 			return m, nil
 		}
 		m.statusMsg = "building resource map..."
-		return m, m.buildResourceMap(m.scope.VcnID, m.vcnFilterName)
+		return m, m.buildResourceMap(m.scope.VcnID, m.vcnFilterName, m.scope.CompartmentID)
 
 	case "d":
 		row, ok := m.selected()
@@ -2321,9 +2384,9 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "compartment":
 			m.openDetailView(row)
 		case "vcn":
-			m.selectVcnFilter(row.ID, row.Name)
+			m.selectVcnFilter(row.ID, row.Name, row.CompartmentID)
 		case "drg":
-			m.selectDrgFilter(row.ID, row.Name)
+			m.selectDrgFilter(row.ID, row.Name, row.CompartmentID)
 		}
 		return m, nil
 
@@ -2792,7 +2855,7 @@ func (m Model) helpEntries() []helpEntry {
 	if m.current().Key() == "drg" {
 		add("enter / i", "filter by this DRG")
 	}
-	if key := m.current().Key(); key == "security-list" || key == "route-table" {
+	if key := m.current().Key(); key == "security-list" || key == "route-table" || key == "nsg" || key == "drg-route-table" {
 		add("v", "view rules")
 	}
 	if m.vcnFilterName != "" || m.drgFilterName != "" {

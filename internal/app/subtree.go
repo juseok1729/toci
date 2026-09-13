@@ -108,6 +108,7 @@ func (m *Model) startSubtreeFanout() tea.Cmd {
 			rows, err := fetchAll(ctx, res, s)
 			for i := range rows {
 				rows[i].CompartmentLabel = t.RelLabel
+				rows[i].CompartmentID = t.ID
 			}
 			return subtreeRowsMsg{gen: gen, targetID: t.ID, rows: rows, err: err}
 		}

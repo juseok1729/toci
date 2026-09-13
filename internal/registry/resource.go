@@ -44,6 +44,14 @@ type Row struct {
 	// on synthesized child rows (tree/group children), which have no
 	// compartment of their own to show.
 	CompartmentLabel string
+
+	// CompartmentID is CompartmentLabel's OCID counterpart, set at the same
+	// time (subtree fan-out only) — needed wherever code re-fetches
+	// something scoped to this row (e.g. the VCN resource map/diagram),
+	// since the current Scope.CompartmentID may be the fan-out's base
+	// compartment rather than this particular row's own. Empty otherwise,
+	// meaning the current scope compartment is already correct.
+	CompartmentID string
 }
 
 // Column renders one field of a Row into table text. Get is a closure over

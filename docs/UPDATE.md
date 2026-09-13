@@ -2,6 +2,52 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.20
+
+### VCN 컬럼: STATE 제거, IP RANGE 추가
+
+- "vcn 컬럼에서 state 제거하고 cidr 다음에 iprange 추가해줘" → STATE 컬럼 제거, CIDR 다음에 Subnet과 동일한 `cidrRange`(사용 가능 호스트 수 포함) 재사용으로 IP RANGE 컬럼 추가.
+
+### 서브트리 모드에서 VCN 리소스맵(`M`)이 VCN만 나오는 버그
+
+- "vcn 서브트리모드(C)상태에서 리소스맵(M)을 키면 vcn만 나와. 서브넷/라우팅테이블/게이트웨이 정보가 안나와" — 서브트리 모드에서는 VCN 행이 현재 보고 있는 컴파트먼트(`m.scope.CompartmentID`, 서브트리 시작 기준)가 아니라 하위의 다른 컴파트먼트에서 왔을 수 있는데, 리소스맵(과 "m" 다이어그램 export)이 서브넷/라우팅테이블/게이트웨이를 조회할 때 항상 `m.scope.CompartmentID`만 필터로 써서, OCI API의 CompartmentId+VcnId AND 필터 조건에 걸려 조용히 0건이 조회됐다.
+- `registry.Row`에 `CompartmentID` 필드를 추가해 서브트리 fan-out이 각 행에 실제 소속 컴파트먼트를 채우고, `selectVcnFilter`/`selectDrgFilter`("i"/Enter로 필터 선택 시)가 이 값으로 `m.scope.CompartmentID`를 갱신하도록 수정 — 같은 근본 원인이라 `M`뿐 아니라 `m` 다이어그램 export도 함께 고쳐짐. VCN 테이블에서 직접 `M`을 누르는 단축키 경로도 커서 행의 `CompartmentID`를 우선 사용하도록 반영.
+
+### DRG Attachment: ATTACHED TO를 OCID 대신 이름으로
+
+- "drg attachment에 attached to에 vcn ocid가 있는것같은데 이름으로 보고싶어. 다른 리소스라고 할지라도 ocid가 아닌 이름태그로 볼수있으면 좋겠어" → 연결 대상 종류(VCN/Virtual Circuit/Remote Peering Connection/IPSec Tunnel)별로 각각 다른 Get API로 이름을 조회해 표시. IPSec Tunnel은 터널 자체 DisplayName이 보통 비어있어 상위 IPSec Connection 이름으로 폴백, 조회 실패 시 OCID로 폴백.
+- 행마다 추가 API 호출이 하나씩 필요해서 DB System/Instance/Exadata와 동일한 패턴(행별 goroutine fan-out, 각자 자기 인덱스에만 쓰기)으로 병렬화.
+
+### NSG / DRG Route Table 규칙 뷰(`v`)
+
+- "nsg도 v로 rules 테이블뷰 볼수있으면 좋겟어" / "drg route tables도 v로 규칙테이블 볼수있으면 좋겠어" → Security List/Route Table과 달리 NSG·DRG Route Table의 규칙은 오브젝트에 내장돼 있지 않고 별도 리소스(`ListNetworkSecurityGroupSecurityRules`/`ListDrgRouteRules`)라, 기존 동기 방식(`securityRulesView`/`routeRulesView`) 대신 리소스맵처럼 비동기 `tea.Cmd`로 구현(`internal/app/nsg_rules.go`, `drg_route_rules.go`).
+- NSG 규칙 포맷/렌더링은 Security List의 `renderSecurityRules`/`securityRuleHeaders`를 그대로 재사용(같은 필드를 담은 다른 SDK 타입이라 매핑만 다름).
+- DRG Route Table의 NEXT HOP도 위 "이름으로 보고싶다" 요청과 같은 맥락으로, 해당 DRG의 attachment 목록을 한 번 조회해 OCID→이름으로 매핑(못 찾으면 OCID 폴백), BLACKHOLE 라우트는 "BLACKHOLE"로 표시.
+- 둘 다 `v`로 열고 esc/q/v로 닫는 토글, CSV export 모두 기존 규칙 뷰와 동일하게 동작.
+
+## v0.1.19
+
+### VCN 리소스맵 (`M`)
+
+- "feature/resource-map 브랜치 만들어서 [AWS 콘솔 스크린샷]처럼 vcn 리소스맵 구현해줘" — AWS 콘솔의 VCN 리소스맵을 참고해 VCN/Subnet/Route Table/Network Connection을 컬럼으로 나열하고 ASCII 커넥터 선으로 잇는 인앱 시각화를 신규 구현(`internal/app/resource_map.go`, `resource_map_layout.go`). Route Table 규칙을 실제로 조회해서 서브넷→라우트 테이블→게이트웨이 연결을 계산하고, 사용되지 않는 라우트 테이블/게이트웨이는 그려넣지 않음.
+- "라우팅테이블을 통해서 어느 서브넷에서 어느 게이트웨이로 가는지에 따라 경로를 하이라이트 해줄수있나?" → j/k로 서브넷을 선택하면 그 서브넷의 라우트 테이블·게이트웨이 경로 전체(박스 테두리+텍스트, 커넥터 선)를 강조색으로 표시(`resourceMapPath`). "하이라이트를 더 밝게하거나 굵게" 요청으로 테두리만이 아니라 텍스트까지 강조색+Bold를 함께 입히도록 수정.
+- 박스에 CIDR(서브넷/VCN)·IP(NAT 게이트웨이)를 두 번째 줄로 추가. 색상은 "흰색으로 표시할수있나? 좀 눈에 안띄는것같아서" → 흰색 → "초록색보다는 노란색이 어떨까" → 최종 노란색(`stateTextWarn` 재사용)으로 두 차례 조정.
+- "vcn 리소스맵이 페이지가 바뀌어서 표시되는것같은데... 테이블 하단에 플로팅되게해줄수없나?" → 전체 화면을 갈아치우던 `modeDetail` 방식에서, `f` 검색창처럼 테이블 위에 뜨는 하단 오버레이로 전환(`overlayBottom`). 처음엔 화면 높이의 절반으로 시작했다가 "조금만 더 늘려줘" 요청으로 60%(`height*3/5`)로 확대.
+- "vcn을 엔터하고 검색창이 뜨고... 너무 번거로워, 원하는 vcn행에 커서를 두고 바로 M으로 띄우고 싶다" → VCN 테이블을 보고 있을 때는 `M`이 커서가 놓인 행을 곧바로 리소스맵으로 빌드(`buildResourceMap(vcnID, vcnName)`가 `m.scope`/영속 필터를 건드리지 않고 그 자리에서만 사용) — 기존에 VCN 필터를 먼저 잡아야(`i`/Enter → 검색창 닫기) M이 동작하던 경로도 그대로 유지.
+
+### 첫 화면을 빈 테이블 + 검색창으로
+
+- "어차피 컴파트먼트를 엔터눌러도 상세정보가 보이게 된거라면, 첫화면은 빈테이블에 검색창이 나오는게 나을것같은데?" → 시작 시 Compartments 목록을 자동 로드하던 것을 제거하고, k9s/taws 스타일로 빈 테이블 위에 리소스 검색창(`f`)을 바로 띄움.
+
+### 리소스 검색 fuzzy 매칭 오탐 수정
+
+- "vcn"으로 검색하면 무관한 "Governance/Compartments"가 매칭되던 버그 — `category + "/" + label`을 하나로 이어붙인 문자열에 fuzzy 매칭을 걸다 보니, 앞뒤로 쪼개진 글자가 카테고리/레이블 경계를 넘어 우연히 이어져도 매칭되던 것. 레이블/카테고리 두 문자열에 각각 별도로 `fuzzy.Find`를 돌려 매칭된 인덱스를 합집합으로 모으고, 원래 목록 순서(카테고리 그룹 유지)로 정렬하도록 수정.
+
+### Subnet TYPE 컬럼 (Public/Private)
+
+- "subnet 에서 컬럼에 Private 인지 Public 인지 알수있는 컬럼 추가해줘" → `ProhibitPublicIpOnVnic` 값으로 판정하는 `TYPE` 컬럼 추가.
+- "public 은 초록색, private 은 파란색 계열로 텍스트 색상 적용해줘" → Public은 기존 `stateTextGood`(초록) 재사용, Private은 신규 파란색 스타일(ANSI "12") 추가(`subnet_type_color.go`).
+
 ## v0.1.18
 
 ### 컴파트먼트를 전역 컨텍스트로 분리 (`c`/`C`/`1`-`9`)
