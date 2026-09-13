@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -144,12 +145,34 @@ func (m Model) handleSubtreeRowsMsg(msg subtreeRowsMsg) (tea.Model, tea.Cmd) {
 		if se, ok := common.IsServiceError(msg.err); ok && (se.GetHTTPStatusCode() == 401 || se.GetHTTPStatusCode() == 404) {
 			m.subtreeSkipped++
 		} else {
-			m.subtreeErrMsg = msg.err.Error()
+			m.subtreeErrMsg = summarizeSubtreeError(msg.err)
 			m.statusMsg = "subtree fetch error (" + msg.targetID + "): " + m.subtreeErrMsg
 		}
 	}
 	m.setDisplayRows()
 	return m, nil
+}
+
+// summarizeSubtreeError condenses a fan-out error to one line for the
+// status bar. A ServiceError's own Error() is the OCI Go SDK's full
+// multi-paragraph troubleshooting block (status/code/message/operation
+// name/timestamp/docs links, newlines included) — dumping that whole
+// thing into what's meant to be a single status line broke the footer
+// into several lines of raw SDK text instead of clipping to width like
+// every other status message. Code + Message is the part a user actually
+// needs; everything else is redundant with it.
+func summarizeSubtreeError(err error) string {
+	if se, ok := common.IsServiceError(err); ok {
+		return fmt.Sprintf("%d %s: %s", se.GetHTTPStatusCode(), se.GetCode(), se.GetMessage())
+	}
+	// Not a ServiceError (context/network/etc.) — normally already a
+	// short, single-line message, but guard against a multi-line one
+	// anyway rather than trust that.
+	msg := err.Error()
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		msg = msg[:i]
+	}
+	return msg
 }
 
 // buildSubtreeRows assembles the merged row set for subtree mode: each

@@ -1543,7 +1543,11 @@ func (m Model) updateEmbeddedTerm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "q", "v":
+		// "v" toggles: it opened this rules view (security-list/route-table
+		// — see updateTable's "v" case), so pressing it again closes the
+		// same way esc/q already do, rather than needing a different key
+		// to back out of what "v" got you into.
 		m.mode = modeTable
 		return m, nil
 	case "ctrl+c":
@@ -2133,14 +2137,26 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "v":
-		if m.current().Key() != "security-list" {
+		resKey := m.current().Key()
+		if resKey != "security-list" && resKey != "route-table" {
 			return m, nil
 		}
 		row, ok := m.selected()
 		if !ok {
 			return m, nil
 		}
-		content, records, name, ok := securityRulesView(row)
+		var content string
+		var records [][]string
+		var headers []string
+		var name, suffix string
+		switch resKey {
+		case "security-list":
+			content, records, name, ok = securityRulesView(row)
+			headers, suffix = securityRuleHeaders, "security-rules-"
+		case "route-table":
+			content, records, name, ok = routeRulesView(row)
+			headers, suffix = routeRuleHeaders, "route-rules-"
+		}
 		if !ok {
 			return m, nil
 		}
@@ -2148,8 +2164,8 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.detail.SetContent(content)
 		m.detail.GotoTop()
 		m.detailExport = &detailExportData{
-			filenameSuffix: "security-rules-" + name,
-			header:         securityRuleHeaders,
+			filenameSuffix: suffix + name,
+			header:         headers,
 			records:        records,
 		}
 		return m, nil
@@ -2653,7 +2669,7 @@ func (m Model) helpEntries() []helpEntry {
 	if m.current().Key() == "drg" {
 		add("enter / i", "filter by this DRG")
 	}
-	if m.current().Key() == "security-list" {
+	if key := m.current().Key(); key == "security-list" || key == "route-table" {
 		add("v", "view rules")
 	}
 	if m.vcnFilterName != "" || m.drgFilterName != "" {

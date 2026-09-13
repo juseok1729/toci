@@ -24,6 +24,26 @@ type Factory struct {
 	cache map[string]any // "region:type" -> client
 }
 
+// retryPolicy is applied to every client this factory builds. None of the
+// SDK's generated List/Get/etc. calls retry anything by default — each
+// one falls back to common.NoRetryPolicy() unless the client (or the
+// individual request) overrides it — so a transient 429 (rate limit) or
+// 5xx surfaces as a hard failure straight away. That's most visible under
+// toci's own compartment subtree fan-out (many concurrent List calls
+// across compartments can trip a list API's per-second limit), but it
+// applies to every call this app makes. common.DefaultRetryPolicy()
+// retries exactly those cases (429/5xx, and a couple of specific 409s)
+// with exponential backoff and jitter — no reason to hand-roll our own.
+var retryPolicy = common.DefaultRetryPolicy()
+
+// retryConfigurable is implemented by every generated OCI client (they
+// all embed common.BaseClient) via a pointer receiver — checked generically
+// in get() so each client builder below doesn't need its own copy of this
+// one-line call.
+type retryConfigurable interface {
+	SetCustomClientConfiguration(common.CustomClientConfiguration)
+}
+
 func NewFactory(provider common.ConfigurationProvider) *Factory {
 	return &Factory{provider: provider, cache: make(map[string]any)}
 }
@@ -50,6 +70,9 @@ func get[T any](f *Factory, region, kind string, build func() (T, error)) (T, er
 	if err != nil {
 		var zero T
 		return zero, fmt.Errorf("build %s client: %w", kind, err)
+	}
+	if rc, ok := any(&client).(retryConfigurable); ok {
+		rc.SetCustomClientConfiguration(common.CustomClientConfiguration{RetryPolicy: &retryPolicy})
 	}
 	f.cache[key] = client
 	return client, nil
