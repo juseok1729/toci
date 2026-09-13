@@ -721,18 +721,19 @@ func fitColumnWidth(header string, values []string, ceiling int) int {
 // column collapses to nothing readable.
 const tableColMinWidth = 3
 
-// protectedColumnHeaders are the column titles colorizeState/colorizeEdition
-// (state_color.go/edition_color.go) substring-match against the fully
-// rendered cell text, after the table itself has already truncated it.
-// Shrinking one of these below its content-fit width risks bubbles cutting
-// a value like "Running" down to "Runni…" — the match then silently fails
-// and the color just vanishes, with nothing visibly wrong to explain why.
-// fitColumns exempts them from shrinking; every other column absorbs the
-// difference instead.
+// protectedColumnHeaders are the column titles colorizeState/colorizeEdition/
+// colorizeSubnetType (state_color.go/edition_color.go/subnet_type_color.go)
+// exact- or substring-match against the fully rendered cell text, after the
+// table itself has already truncated it. Shrinking one of these below its
+// content-fit width risks bubbles cutting a value like "Running" down to
+// "Runni…" — the match then silently fails and the color just vanishes,
+// with nothing visibly wrong to explain why. fitColumns exempts them from
+// shrinking; every other column absorbs the difference instead.
 var protectedColumnHeaders = map[string]bool{
 	"STATE":   true,
 	"NODE":    true,
 	"EDITION": true,
+	"TYPE":    true,
 }
 
 // fitColumns computes each column's content-fit width (fitColumnWidth), then
@@ -941,7 +942,18 @@ func (m *Model) relayout() {
 		tableWidth = mainAbsFloor
 	}
 	m.table.SetWidth(tableWidth)
-	m.detail.SetWidth(mainWidth)
+	if m.resourceMap != nil {
+		// The "M" resource map floats over the table in a bottom overlay
+		// box rather than replacing the whole screen — see
+		// resourceMapOverlaySize's doc — so m.detail gets sized to that
+		// box instead of the full page while it's showing.
+		w, h := m.resourceMapOverlaySize()
+		m.detail.SetWidth(w)
+		m.detail.SetHeight(h)
+	} else {
+		m.detail.SetWidth(mainWidth)
+		m.detail.SetHeight(m.height - 8)
+	}
 	m.relayoutTableColumns()
 }
 
@@ -1259,12 +1271,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		// -10/-8: 5 header lines (Profile/Region/Resource/Compartment/
+		// -10: 5 header lines (Profile/Region/Resource/Compartment/
 		// Recent) + 1 blank line, plus whatever else each pane reserves
-		// below that.
+		// below that. m.detail's own height (full-page or the "M"
+		// resource map's smaller overlay box) is relayout()'s call.
 		m.tableHeight = msg.Height - 10
 		m.table.SetHeight(m.tableHeight)
-		m.detail.SetHeight(msg.Height - 8)
 		m.relayout()
 		if m.embTerm != nil {
 			cols, rows := m.embTermSize()
@@ -1410,6 +1422,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.data.subnets) == 0 {
 			m.resourceMapSelected = -1
 		}
+		// Size m.detail to the floating overlay box (not the full page)
+		// before rendering into it — relayout() branches on m.resourceMap,
+		// now non-nil.
+		m.relayout()
 		m.openDetailContent(renderResourceMap(msg.data, m.resourceMapSelected))
 		return m, nil
 
@@ -1592,7 +1608,14 @@ func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// same way esc/q already do, rather than needing a different key
 		// to back out of what "v" got you into.
 		m.mode = modeTable
+		wasResourceMap := m.resourceMap != nil
 		m.resourceMap = nil
+		if wasResourceMap {
+			// m.detail was sized to the resource map's smaller floating
+			// box (see relayout()) — restore full-page sizing for
+			// whatever opens in modeDetail next.
+			m.relayout()
+		}
 		return m, nil
 	case "ctrl+c":
 		return m, tea.Quit
@@ -2244,12 +2267,23 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.buildVcnDiagram()
 
 	case "M":
+		// On the VCN table itself, the cursor row is a direct shortcut —
+		// no need to "i"/Enter it into a filter first just to immediately
+		// view its map.
+		if m.current().Key() == "vcn" {
+			row, ok := m.selected()
+			if !ok {
+				return m, nil
+			}
+			m.statusMsg = "building resource map..."
+			return m, m.buildResourceMap(row.ID, row.Name)
+		}
 		if m.vcnFilterName == "" {
-			m.statusMsg = "pick a VCN first (\"i\" on a VCN row) to view its resource map"
+			m.statusMsg = "pick a VCN first (\"i\" on a VCN row, or from the VCN table) to view its resource map"
 			return m, nil
 		}
 		m.statusMsg = "building resource map..."
-		return m, m.buildResourceMap()
+		return m, m.buildResourceMap(m.scope.VcnID, m.vcnFilterName)
 
 	case "d":
 		row, ok := m.selected()
@@ -2395,6 +2429,12 @@ func (m Model) viewContent() string {
 	if renderMode == modePicker && (m.picker.kind == pickerResource || m.picker.kind == pickerCompartment) {
 		renderMode = modeTable
 	}
+	if renderMode == modeDetail && m.resourceMap != nil {
+		// The "M" resource map floats over the table instead of replacing
+		// the screen — render the table normally and overlay it below,
+		// same as the resource-search/compartment pickers above.
+		renderMode = modeTable
+	}
 
 	var main strings.Builder
 	switch renderMode {
@@ -2446,6 +2486,7 @@ func (m Model) viewContent() string {
 			tableView = colorizeState(tableView, m.table.Columns(), "STATE")
 			tableView = colorizeState(tableView, m.table.Columns(), "NODE")
 			tableView = colorizeEdition(tableView, m.table.Columns())
+			tableView = colorizeSubnetType(tableView, m.table.Columns())
 			if m.blinkEnabled {
 				tableView = blinkRecentRows(tableView, m.table.Columns(), m.recentRowNames(), m.blinkOn)
 			}
@@ -2481,6 +2522,9 @@ func (m Model) viewContent() string {
 	}
 	if m.mode == modePicker && m.picker.kind == pickerCompartment {
 		out = overlayCenter(out, m.renderCompartmentPicker(), m.width, m.height)
+	}
+	if m.mode == modeDetail && m.resourceMap != nil {
+		out = overlayBottom(out, m.renderResourceMapOverlayBox(), m.width)
 	}
 	if m.showHelp {
 		out = overlayBottomRight(out, renderHelpBox(m), m.width)
@@ -2724,6 +2768,8 @@ func (m Model) helpEntries() []helpEntry {
 	add("e", "export csv")
 	if m.vcnFilterName != "" {
 		add("m", "export diagram")
+		add("M", "resource map")
+	} else if m.current().Key() == "vcn" {
 		add("M", "resource map")
 	}
 	if _, ok := m.actionable(); ok {

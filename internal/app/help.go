@@ -91,6 +91,18 @@ func overlayCenter(base, box string, termWidth, termHeight int) string {
 	return spliceOverlay(baseLines, boxLines, x, y, termWidth)
 }
 
+// overlayBottom splices box onto the bottom of an already-rendered view,
+// horizontally centered — the same idea as overlayBottomRight, just
+// centered instead of right-aligned. Used for the "M" resource map, which
+// floats over the table (like "f"'s overlayCenter) rather than replacing
+// the whole screen the way modeDetail normally does.
+func overlayBottom(base, box string, termWidth int) string {
+	boxWidth, boxLines := overlayBoxDims(box)
+	baseLines := strings.Split(base, "\n")
+	x := (termWidth - boxWidth) / 2
+	return spliceOverlay(baseLines, boxLines, x, len(baseLines)-len(boxLines), termWidth)
+}
+
 func overlayBoxDims(box string) (width int, lines []string) {
 	lines = strings.Split(box, "\n")
 	for _, l := range lines {

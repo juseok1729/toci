@@ -5,7 +5,53 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/oracle/oci-go-sdk/v65/core"
+
+	"toci/internal/registry"
 )
+
+// TestMKeyOnVcnRowBuildsResourceMapWithoutFiltering is the reported
+// shortcut: on the VCN table itself, "M" should use the row under the
+// cursor directly — no need to "i"/Enter it into a filter (and dismiss
+// the resource-search picker that opens) just to view its map.
+func TestMKeyOnVcnRowBuildsResourceMapWithoutFiltering(t *testing.T) {
+	resources := registry.All(nil)
+	vcnIdx := -1
+	for i, r := range resources {
+		if r.Key() == "vcn" {
+			vcnIdx = i
+		}
+	}
+	if vcnIdx < 0 {
+		t.Fatal("expected vcn resource to be registered")
+	}
+
+	m := Model{
+		resources: resources,
+		resIdx:    vcnIdx,
+		mode:      modeTable,
+		table:     newTable(20),
+		scope:     registry.Scope{Region: "us-ashburn-1", CompartmentID: "root"},
+	}
+	m.rows = []registry.Row{{ID: "vcn1", Name: "my-vcn", Raw: core.Vcn{}}}
+	m.setDisplayRows()
+	m.table.SetCursor(0)
+
+	mm, cmd := m.Update(tea.KeyPressMsg{Text: "M"})
+	m2 := mm.(Model)
+
+	if m2.vcnFilterName != "" {
+		t.Errorf("vcnFilterName = %q, want unchanged (\"M\" here shouldn't set the persistent filter)", m2.vcnFilterName)
+	}
+	if cmd == nil {
+		t.Fatal("expected a build-resource-map command")
+	}
+	if strings.Contains(m2.statusMsg, "pick a VCN first") {
+		t.Errorf("statusMsg = %q, want the resource map to start building instead of erroring", m2.statusMsg)
+	}
+}
 
 func previewData() resourceMapData {
 	return resourceMapData{

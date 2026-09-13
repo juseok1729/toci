@@ -18,10 +18,23 @@ func NewSubnetResource(f *clients.Factory) *SubnetResource {
 func (r *SubnetResource) Key() string   { return "subnet" }
 func (r *SubnetResource) Label() string { return "Subnets" }
 
+// subnetAccessLabel reports whether a subnet is Public or Private —
+// ProhibitPublicIpOnVnic is the field OCI's own console bases that label
+// on: true means no VNIC in the subnet may get a public IP.
+func subnetAccessLabel(sn core.Subnet) string {
+	if sn.ProhibitPublicIpOnVnic != nil && *sn.ProhibitPublicIpOnVnic {
+		return "Private"
+	}
+	return "Public"
+}
+
 func (r *SubnetResource) Columns() []Column {
 	return []Column{
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(core.Subnet).DisplayName)
+		}},
+		{Header: "TYPE", Width: 8, Get: func(row Row) string {
+			return subnetAccessLabel(row.Raw.(core.Subnet))
 		}},
 		{Header: "CIDR", Width: 18, Get: func(row Row) string {
 			return deref(row.Raw.(core.Subnet).CidrBlock)

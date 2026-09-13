@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/oracle/oci-go-sdk/v65/core"
 
 	"toci/internal/clients"
@@ -34,12 +35,17 @@ type resourceMapData struct {
 
 // buildResourceMap fetches and renders the AWS-console-style resource map
 // (VCN / Subnets / Route Tables / Network Connections, with connector
-// lines) for the currently VCN-filtered scope — the "M" key's view,
-// alongside "m"'s Mermaid file export.
-func (m Model) buildResourceMap() tea.Cmd {
+// lines) for vcnID — the "M" key's view, alongside "m"'s Mermaid file
+// export. vcnID/vcnName come from whichever VCN "M" was pressed against
+// (see updateTable's "M" case): the active VCN filter, or — a shortcut so
+// browsing the VCN table itself doesn't need "i"/Enter first — the row
+// under the cursor there. Neither touches m.scope.VcnID/m.vcnFilterName
+// themselves, so viewing a map this way doesn't also change the active
+// filter.
+func (m Model) buildResourceMap(vcnID, vcnName string) tea.Cmd {
 	factory := m.factory
 	scope := m.scope
-	vcnName := m.vcnFilterName
+	scope.VcnID = vcnID
 	return func() tea.Msg {
 		data, err := fetchResourceMapData(context.Background(), factory, scope, vcnName)
 		if err != nil {
@@ -47,6 +53,56 @@ func (m Model) buildResourceMap() tea.Cmd {
 		}
 		return resourceMapMsg{data: data}
 	}
+}
+
+// resourceMapOverlayHeightNum/Denom is the fraction of the terminal height
+// the "M" overlay's floating box takes up — a bit more than half, so a VCN
+// with more than a couple of subnets doesn't scroll immediately.
+const (
+	resourceMapOverlayHeightNum   = 3
+	resourceMapOverlayHeightDenom = 5
+)
+
+// resourceMapOverlaySize is the "M" resource map's floating box size — a
+// bottom-of-screen overlay over the current table (like the "space"
+// shortcuts popup or "f" resource search), not a full-page modeDetail
+// replacement, so the table underneath stays visible around it. Returns
+// the *content* width/height to give m.detail — the wrapping border in
+// renderResourceMapOverlayBox sizes itself to that content rather than
+// taking an explicit Width (see mapBoxStyle's own doc on why setting both
+// double-counts the border/padding overhead).
+func (m Model) resourceMapOverlaySize() (width, height int) {
+	width = m.mainContentWidth() - tableBoxOverhead
+	if width < mainAbsFloor {
+		width = mainAbsFloor
+	}
+	height = m.height * resourceMapOverlayHeightNum / resourceMapOverlayHeightDenom
+	if height < 10 {
+		height = 10
+	}
+	return width, height
+}
+
+// renderResourceMapOverlayBox wraps m.detail's current view (the resource
+// map, sized to resourceMapOverlaySize by relayout()) in the same bordered
+// box style renderTableBox uses for the main table, title punched into
+// the top border — floated over the table by overlayBottom in viewContent
+// rather than replacing the screen.
+func (m Model) renderResourceMapOverlayBox() string {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ociBorder)).
+		Padding(0, 1)
+	lines := strings.Split(style.Render(m.detail.View()), "\n")
+
+	title := titleStyle.Render(" Resource Map — j/k select · esc/v close ")
+	topWidth := ansi.StringWidth(lines[0])
+	x := (topWidth - ansi.StringWidth(title)) / 2
+	if x < 0 {
+		x = 0
+	}
+	lines[0] = embedInLine(lines[0], title, x)
+	return strings.Join(lines, "\n")
 }
 
 // gatewayEntity is a resource map "network connection" box's content

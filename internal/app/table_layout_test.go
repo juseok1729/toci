@@ -153,6 +153,42 @@ func TestRelayoutPreservesCursorAndResizesColumns(t *testing.T) {
 	}
 }
 
+// TestRelayoutSizesDetailToResourceMapOverlay is the "M" resource map's
+// floating-box request: while it's active, m.detail (the shared modeDetail
+// viewport) must be sized to the smaller overlay box, not the full page —
+// and restored to full-page sizing the moment the map closes, so a
+// subsequent "d"/"v" detail view isn't left stuck at the overlay's size.
+func TestRelayoutSizesDetailToResourceMapOverlay(t *testing.T) {
+	m := New(nil, registry.Scope{Region: "ap-chuncheon-1"}, false, "demo", "dev")
+	m.mode = modeTable
+	m.width, m.height = 120, 40
+	m.relayout()
+
+	fullWidth, fullHeight := m.detail.Width(), m.detail.Height()
+
+	data := resourceMapData{}
+	m.resourceMap = &data
+	m.relayout()
+
+	overlayWidth, overlayHeight := m.resourceMapOverlaySize()
+	if m.detail.Width() != overlayWidth {
+		t.Errorf("detail.Width() = %d, want the overlay width %d", m.detail.Width(), overlayWidth)
+	}
+	if m.detail.Height() != overlayHeight {
+		t.Errorf("detail.Height() = %d, want the overlay height %d", m.detail.Height(), overlayHeight)
+	}
+	if overlayHeight >= fullHeight {
+		t.Errorf("overlay height %d should be noticeably shorter than the full page's %d", overlayHeight, fullHeight)
+	}
+
+	m.resourceMap = nil
+	m.relayout()
+	if m.detail.Width() != fullWidth || m.detail.Height() != fullHeight {
+		t.Errorf("detail size after closing the overlay = (%d, %d), want the restored full-page size (%d, %d)",
+			m.detail.Width(), m.detail.Height(), fullWidth, fullHeight)
+	}
+}
+
 func TestFitColumnsExactFitReturnsNatural(t *testing.T) {
 	cols := []registry.Column{{Header: "NAME", Width: 30}}
 	colValues := [][]string{{"x"}}
