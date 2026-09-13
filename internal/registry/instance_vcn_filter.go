@@ -68,6 +68,32 @@ func InstanceSubnetIDs(ctx context.Context, computeClient core.ComputeClient, co
 	return out, nil
 }
 
+// subnetNames returns subnetID -> DisplayName for every subnet in the
+// compartment — used to label the Instance table's SUBNET column from the
+// subnet IDs InstanceSubnetIDs resolves.
+func subnetNames(ctx context.Context, vnClient core.VirtualNetworkClient, compartmentID string) (map[string]string, error) {
+	names := make(map[string]string)
+	page := ""
+	for {
+		req := core.ListSubnetsRequest{CompartmentId: &compartmentID}
+		if page != "" {
+			req.Page = &page
+		}
+		resp, err := vnClient.ListSubnets(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		for _, sn := range resp.Items {
+			names[deref(sn.Id)] = deref(sn.DisplayName)
+		}
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = *resp.OpcNextPage
+	}
+	return names, nil
+}
+
 // instanceIDsInVcn returns the OCIDs of instances with a VNIC in the given
 // VCN. Instances don't carry a VCN reference themselves — only their VNIC
 // attachments do, via subnet — so this joins the VCN's subnets against

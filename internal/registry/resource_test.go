@@ -41,6 +41,79 @@ func TestSumInstanceVolumeSizes(t *testing.T) {
 	}
 }
 
+// TestSanitizeVolumeSize guards the fix for a reported issue: a File
+// Storage (NFS) mount reports its size in the exabyte range rather than a
+// real Boot/Block Volume's actual (<=32TB) size — if one ever turned up in
+// a ListVolumes/ListBootVolumes response, summing it in would make an
+// instance's total storage read as "8 exabytes" instead of its real disk
+// size. Anything past maxSaneVolumeGB must be dropped, not counted.
+func TestSanitizeVolumeSize(t *testing.T) {
+	normal := int64(1024)                // a real 1TB block volume
+	exabyteScale := int64(8_000_000_000) // ~8 exabytes in GB — a File Storage mount's reported size
+
+	if got := sanitizeVolumeSize(&normal); got == nil || *got != normal {
+		t.Errorf("sanitizeVolumeSize(%d) = %v, want %d unchanged", normal, got, normal)
+	}
+	if got := sanitizeVolumeSize(&exabyteScale); got != nil {
+		t.Errorf("sanitizeVolumeSize(%d) = %v, want nil (excluded as implausible)", exabyteScale, *got)
+	}
+	if got := sanitizeVolumeSize(nil); got != nil {
+		t.Errorf("sanitizeVolumeSize(nil) = %v, want nil", *got)
+	}
+}
+
+func TestShortOS(t *testing.T) {
+	cases := map[string]string{
+		"Oracle Linux":            "OL",
+		"Oracle Autonomous Linux": "OAL",
+		"Canonical Ubuntu":        "Ubuntu",
+		"Windows":                 "Win",
+		"CentOS Linux":            "CentOS Linux", // no abbreviation — falls back to the raw value
+		"":                        "",
+	}
+	for in, want := range cases {
+		if got := shortOS(in); got != want {
+			t.Errorf("shortOS(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestShortVersion(t *testing.T) {
+	cases := map[string]string{
+		"Server 2019 Standard":   "Svr 2019 Std",
+		"Server 2022 Datacenter": "Svr 2022 DC",
+		"8.9":                    "8.9", // Linux versions pass through unchanged
+		"22.04":                  "22.04",
+		"":                       "",
+	}
+	for in, want := range cases {
+		if got := shortVersion(in); got != want {
+			t.Errorf("shortVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestImageLabel guards a reported bug: OCI itself sets both
+// OperatingSystem and OperatingSystemVersion to "Custom" for a custom
+// image, so joining them unconditionally produced "Custom Custom" — the
+// version is dropped whenever it duplicates the (abbreviated) OS.
+func TestImageLabel(t *testing.T) {
+	cases := []struct {
+		os, version, want string
+	}{
+		{"Custom", "Custom", "Custom"},
+		{"Oracle Linux", "8.9", "OL 8.9"},
+		{"Windows", "Server 2019 Standard", "Win Svr 2019 Std"},
+		{"Canonical Ubuntu", "", "Ubuntu"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := imageLabel(c.os, c.version); got != c.want {
+			t.Errorf("imageLabel(%q, %q) = %q, want %q", c.os, c.version, got, c.want)
+		}
+	}
+}
+
 func TestDbSystemRoleLabel(t *testing.T) {
 	cases := []struct {
 		name       string

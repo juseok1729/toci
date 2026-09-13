@@ -704,6 +704,20 @@ func fitColumnWidth(header string, values []string, ceiling int) int {
 // column collapses to nothing readable.
 const tableColMinWidth = 3
 
+// protectedColumnHeaders are the column titles colorizeState/colorizeEdition
+// (state_color.go/edition_color.go) substring-match against the fully
+// rendered cell text, after the table itself has already truncated it.
+// Shrinking one of these below its content-fit width risks bubbles cutting
+// a value like "Running" down to "Runni…" — the match then silently fails
+// and the color just vanishes, with nothing visibly wrong to explain why.
+// fitColumns exempts them from shrinking; every other column absorbs the
+// difference instead.
+var protectedColumnHeaders = map[string]bool{
+	"STATE":   true,
+	"NODE":    true,
+	"EDITION": true,
+}
+
 // fitColumns computes each column's content-fit width (fitColumnWidth), then
 // scales every column proportionally against the available viewport width —
 // down if it's too wide, rather than leaving columns at full size and
@@ -713,7 +727,8 @@ const tableColMinWidth = 3
 // edge, and left values that would otherwise fit the screen capped at "…"
 // for no reason). Scaling every column by the same ratio, instead of
 // dumping all the slack or all the shrinkage into one column, keeps the
-// table's proportions the same as the terminal grows or shrinks.
+// table's proportions the same as the terminal grows or shrinks — except
+// when shrinking, where protectedColumnHeaders opt out (see shrinkColumns).
 func fitColumns(cols []registry.Column, colValues [][]string, available int) []int {
 	natural := make([]int, len(cols))
 	total := 0
@@ -723,6 +738,9 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 	}
 	if available <= 0 || total == available || len(cols) == 0 {
 		return natural
+	}
+	if total > available {
+		return shrinkColumns(cols, natural, available)
 	}
 
 	padding := 2 * len(cols)
@@ -746,11 +764,67 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 		widths[i] = nw
 		sum += nw
 	}
-	if total < available {
-		// Integer truncation during the scale-up can leave a few columns
-		// short of contentAvailable — hand the small remainder to the last
-		// column so the row still reaches the box's right edge exactly.
-		widths[len(widths)-1] += contentAvailable - sum
+	// Integer truncation during the scale-up can leave a few columns short
+	// of contentAvailable — hand the small remainder to the last column so
+	// the row still reaches the box's right edge exactly.
+	widths[len(widths)-1] += contentAvailable - sum
+	return widths
+}
+
+// shrinkColumns is fitColumns' too-wide case: every protectedColumnHeaders
+// column keeps its full natural width, and the shortfall is scaled
+// proportionally across the rest — the same distribute-by-ratio idea
+// fitColumns itself uses, just applied to a subset.
+func shrinkColumns(cols []registry.Column, natural []int, available int) []int {
+	widths := make([]int, len(cols))
+	protectedTotal, flexTotal, flexCount := 0, 0, 0
+	for i, c := range cols {
+		if protectedColumnHeaders[c.Header] {
+			widths[i] = natural[i]
+			protectedTotal += natural[i] + 2
+		} else {
+			flexTotal += natural[i] + 2
+			flexCount++
+		}
+	}
+
+	flexAvailable := available - protectedTotal
+	if flexCount == 0 || flexAvailable <= tableColMinWidth*flexCount {
+		// Nothing flexible to negotiate with, or the protected columns
+		// alone already fill (or exceed) the terminal — floor every
+		// flexible column and let bubbles clip the rest, same as an
+		// unworkably narrow terminal already does elsewhere.
+		for i, c := range cols {
+			if !protectedColumnHeaders[c.Header] {
+				widths[i] = tableColMinWidth
+			}
+		}
+		return widths
+	}
+
+	padding := 2 * flexCount
+	contentAvailable := flexAvailable - padding
+	if contentAvailable < tableColMinWidth*flexCount {
+		contentAvailable = tableColMinWidth * flexCount
+	}
+	contentTotal := flexTotal - padding
+	scale := float64(contentAvailable) / float64(contentTotal)
+
+	sum, lastFlex := 0, -1
+	for i, c := range cols {
+		if protectedColumnHeaders[c.Header] {
+			continue
+		}
+		nw := int(float64(natural[i]) * scale)
+		if nw < tableColMinWidth {
+			nw = tableColMinWidth
+		}
+		widths[i] = nw
+		sum += nw
+		lastFlex = i
+	}
+	if lastFlex >= 0 {
+		widths[lastFlex] += contentAvailable - sum
 	}
 	return widths
 }
