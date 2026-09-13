@@ -2,6 +2,51 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.18
+
+### 컴파트먼트를 전역 컨텍스트로 분리 (`c`/`C`/`1`-`9`)
+
+- 사용자 피드백: "컴파트먼트에 모든 리소스가 속해있지만 컴파트먼트가 최상위 필터기 때문에 리소스 스위칭할 때 무조건 컴파트먼트 상속 리소스만 나온다. 근데 수시로 보고 있는 리소스에서 컴파트먼트만 교체할 수 있으면 좋겠다" — 기획서(`NEW_UI.md`)를 같이 작성해서 범위를 정하고 구현. 핵심은 "컴파트먼트는 내비게이션 단계가 아니라 필터"로 재정의하는 것.
+- `c` 키로 어떤 리소스 화면에서든 컴파트먼트 트리 피커(`internal/app/compartment_picker.go`)를 열어 현재 리소스 타입은 유지한 채 목록만 재조회. 트리는 앱 시작 시 `ListCompartments(compartmentIdInSubtree=true, accessLevel=ACCESSIBLE)` 한 번으로 전체를 캐시(`compartment_tree.go`)하고, fuzzy 매칭 시 매칭된 노드의 조상은 항상 남겨 경로 컨텍스트를 유지 — 동명 컴파트먼트가 흔한 실사용 테넌시를 고려.
+- `C`로 서브트리 모드 토글(F3): 현재 컴파트먼트 + 하위 전체를 fan-out 조회(`subtree.go`). 세마포어(동시 6)로 rate-limit 방어, 결과는 도착 순 스트리밍(먼저 온 컴파트먼트부터 테이블에 반영, 나머지는 "— loading —" placeholder), 401/404는 skip 카운트로만 표시. 테이블 앞엔 `COMPARTMENT` 컬럼이 붙고 헤더엔 `⊕ +N sub` 배지.
+- `1`-`9`로 최근 방문 컴파트먼트 즉시 전환(`recent.go`) — `~/.config/toci/recent.yaml`에 프로필별 영속화, 피커에서 `p`로 pin.
+- Compartments 리소스 뷰의 역할 변경(F6): Enter가 더 이상 컨텍스트 전환이 아니라 상세보기 — 컨텍스트 전환은 `c` 하나로 통일. 기존에 있던 "compartment 목록이 비면 자동으로 VCN 뷰로 점프"하던 `autoRedirect` 로직은 이 재설계로 전제 자체가 사라져 통째로 제거.
+- **버그 1**: 서브트리 모드로 리소스 타입을 바꾸면(예: Instance → Subnet) `switchResource`가 새 컬럼으로 다시 그리기 전에 *이전* 리소스의 fan-out 잔여 데이터를 그대로 렌더링해서 `interface conversion: registry.instanceRow, not core.Subnet` 패닉 발생. `setDisplayRows()` 호출 순서를 fan-out 재시작 이후로 미뤄서 수정, 같은 계열로 서브트리를 끄는 순간에도 placeholder 잔여 행이 남아있으면 동일 패닉이 날 수 있어 `switchCompartment`에도 선제적으로 같은 패치 적용.
+- **버그 2**: 서브넷을 VCN으로 그룹핑(`g`)한 상태에서 `c`로 컴파트먼트만 바꾸면 헤더가 VCN 이름 대신 OCID로 표시됨 — `m.vcnNames` 캐시가 컴파트먼트 전환 시 무효화만 되고 재조회 트리거가 없었음(재조회는 `g`를 다시 누를 때만 발생). `switchCompartment`가 그룹핑이 켜져 있으면 재조회 커맨드를 같이 배치하도록 수정.
+
+### Instance 테이블 컬럼 정리
+
+- 사용자 피드백: "유저들이 궁금해하지않는 컬럼이 있다. DOMAIN 빼줘(AD는 1개), 대신 SUBNET, OS 이미지 버전이 필요해" → `DOMAIN(AD/FD)` 제거, `SUBNET`(VNIC의 서브넷을 이름으로 resolve)과 `OS`(이미지의 `OperatingSystem`+`Version`) 컬럼 추가.
+- OS 이미지 문구가 길다는 지적에 축약 테이블 추가(`instance_image.go`): `Oracle Linux`→`OL`, `Canonical Ubuntu`→`Ubuntu`, `Windows`→`Win`, 버전 쪽도 `Server`→`Svr`/`Standard`→`Std`/`Datacenter`→`DC`. 커스텀 이미지는 OCI가 OS/버전 필드 둘 다 문자열 `"Custom"`으로 채우는 바람에 "Custom Custom"으로 겹쳐 나오던 것도, 버전이 OS와 같으면 생략하는 일반 규칙으로 수정.
+- `USAGE(CPU/MEM %)`(17자)가 실제 값(`23%/45%` 등, 최대 8자 정도)보다 헤더가 훨씬 길어 컬럼 폭을 불필요하게 먹던 것을 `CPU/MEM%`로 축약.
+- "disk 정보가 총합인데 부트/블록볼륨으로 나눠달라, 블록볼륨은 여러개 붙을 수 있으니 총합으로, 파일스토리지는 8엑사바이트로 잡히니 제외"라는 요청 → `DISK(GB)`를 `BOOT/BLK(GB)`로 분리(`instance_storage.go` 재작성, boot/block attachment를 별도 map으로 추적). 실제 OCI 블록볼륨 한도(32TB)의 32배인 1PB(`maxSaneVolumeGB`)를 넘는 값은 File Storage 마운트의 오탐으로 보고 합계에서 제외.
+
+### STATE/NODE/EDITION 컬럼 색상이 조용히 사라지는 버그
+
+- 스크린샷 제보: 컬럼이 많아져 폭이 부족해지면 `fitColumns`의 비례 축소가 STATE 컬럼까지 줄여서 "Running"이 "Runni…"로 잘리고, `colorizeState`(state_color.go)가 텍스트 부분일치로 색을 입히는 방식이라 잘린 텍스트는 매칭에 실패해 색이 그냥 사라짐.
+- 가로 스크롤바 대신, `fitColumns`가 축소(shrink) 국면에서 `STATE`/`NODE`/`EDITION`(색상 매칭에 쓰이는 컬럼들)만 원래 내용 폭 밑으로 줄지 않게 예외 처리(`shrinkColumns`)하고, 부족한 폭은 나머지 순수 정보성 컬럼이 비례 흡수하도록 수정.
+
+### Subnet: STATE 제거, VCN 그룹 헤더에 CIDR/IP RANGE
+
+- "서브넷은 state가 필요없어" → STATE 컬럼 제거.
+- "서브넷에서 g로 vcn 그룹핑하면 vcn 이름이 나오는데... vcn의 cidr와 iprange 도 나왔으면 좋겠어" → `vcnGroupHeader`에 cidr 필드 추가, `treeColumns`가 헤더 행에서 컬럼 제목이 `CIDR`/`IP RANGE`일 때 그 값을 채우도록 확장. IP RANGE 계산은 기존 `registry.cidrRange`를 `CidrRange`로 export해서 재사용(신규 로직 없음).
+
+### 리소스 조회 안정성 (429 재시도, 에러 메시지)
+
+- Route Table 서브트리 조회 중 상태줄이 여러 줄로 깨지는 에러 리포트 → 실제 원인은 OCI Go SDK가 클라이언트/요청에 재시도 정책을 명시하지 않으면 기본값이 `NoRetryPolicy()`(재시도 없음)라는 것. 서브트리 fan-out이 컴파트먼트 수십 개에 동시성 6으로 빠르게 쏘다 보니 Route Table 같은 Networking API의 초당 한도를 건드려 429가 그대로 하드 에러로 노출됨.
+- `internal/clients/factory.go`의 클라이언트 생성 공통 지점(`get[T]`)에서 모든 OCI 클라이언트에 SDK 자체의 `common.DefaultRetryPolicy()`(429/5xx/특정 409에 지수 백오프+지터로 최대 8회 재시도)를 설정하도록 수정 — 서브트리뿐 아니라 앱 전체 호출에 적용되는 근본 수정.
+- 부수적으로 발견한 문제: `ServiceError.Error()`가 SDK의 여러 줄짜리 트러블슈팅 블록이라, 그걸 그대로 한 줄짜리 상태줄에 넣던 게 화면을 깨고 있었음 → `summarizeSubtreeError`로 상태코드/코드/메시지만 한 줄로 축약.
+
+### Route Table 규칙 뷰(`v`) + 상세보기 토글
+
+- "route table도 security list처럼 v를 누르면 route rules를 테이블뷰로 시각화하는걸 추가해줘" → `internal/app/route_rules.go` 신규, `security_rules.go`와 동일한 패턴(`ltable` 렌더 + CSV export 공유). TARGET 컬럼은 `NetworkEntityId` OCID의 리소스 타입 세그먼트로 추론(Internet/NAT/Service Gateway, DRG, Local Peering GW, Private IP), 모르는 타입은 원본 세그먼트를 그대로 보여줘 조용히 사라지지 않게 함.
+- "v 한번누르면 테이블뷰 보이고 v 다시 누르면 되돌아가게 토글되게해줘" → `updateDetail`에서 `v`를 `esc`/`q`와 동급으로 처리해 모든 상세보기(규칙 뷰 포함)를 `v`로도 닫을 수 있게 함.
+
+### 기타
+
+- `shift+↑`/`shift+↓`로 테이블을 절반 페이지씩 스크롤(LazyVim의 ctrl-d/ctrl-u 스타일) — 방향키 한 줄씩만 되던 것에 대한 피드백.
+- `f`/`:` 리소스 검색을 평면 목록에서 카테고리 트리(Governance/Compute/Network/Database, OCI 콘솔 좌측 내비와 동일한 분류)로 변경. fuzzy 매칭은 점수순이 아니라 원래 인덱스로 재정렬해서 카테고리가 뒤섞이지 않게 함. "클릭하면 바로 이동해버린다"는 지적으로, 이 트리에서는 클릭이 선택만 하고 Enter로 확정하도록 변경(카테고리 헤더 행이 실수로 클릭되기 쉬운 위치에 껴 있어서).
+
 ## v0.1.17
 
 ### Exascale 클러스터 노드 트리 (`g` 키) + IP/MEM/OCPU/DISK% 컬럼
