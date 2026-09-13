@@ -191,8 +191,8 @@ func fetchResourceMapData(ctx context.Context, factory *clients.Factory, scope r
 	}
 	rtByID := make(map[string]core.RouteTable, len(rtRows))
 	for _, row := range rtRows {
-		rt, _ := row.Raw.(core.RouteTable)
-		rtByID[row.ID] = rt
+		rt, _ := row.Raw.(registry.RouteTableRow)
+		rtByID[row.ID] = rt.RouteTable
 		if usedRT[row.ID] {
 			data.routeTables = append(data.routeTables, mapNode{id: row.ID, label: row.Name})
 		}

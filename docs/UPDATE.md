@@ -2,6 +2,17 @@
 
 버전(태그)별 변경사항. 배경/이유가 코드만 봐서는 안 드러나는 결정 위주로 기록.
 
+## v0.1.21
+
+### 네트워크/구성 리소스에서 STATE 컬럼 제거
+
+- "서버, 데이터베이스처럼 뭔가 실행되는 대상이 아닌 리소스의 경우에는 state가 필요없는것같아. 판단해서 각각 STATE 컬럼 제거해줘" → 실제로 실행되는 워크로드(Instance/DB System/ADB/Exadata/Exascale/Load Balancer)는 STATE를 유지하고, 네트워크/조직 구성 리소스인 Compartment, DRG, DRG Attachment, DRG Route Distribution, DRG Route Table, NSG, Route Table, Security List에서 STATE 컬럼 제거.
+
+### Route Table TYPE(Public/Private), VCN 컬럼
+
+- "라우팅테이블도 퍼블릭/프라이빗이 있나?" — 라우팅테이블 자체엔 그런 필드가 없지만(Public/Private은 Subnet 속성), 0.0.0.0/0을 Internet Gateway로 보내는 규칙이 있는지로 유추 가능하다고 답변 → "응 추가해줘"에 따라 규칙 중 Internet Gateway 타겟이 하나라도 있으면 Public, 없으면 Private으로 판정하는 TYPE 컬럼 추가. Subnet TYPE 컬럼과 헤더·값이 동일해서 기존 `colorizeSubnetType`(초록/파랑) 색상이 별도 작업 없이 그대로 적용됨.
+- "라우팅테이블에 VCN 컬럼 추가해줘" → `core.RouteTable`을 `RouteTableRow{..., VcnName}`로 래핑해 VCN 이름(OCID 아님)을 표시. VCN 필터가 걸려있으면 모든 행이 같은 VCN을 공유하므로, 행마다 조회하지 않고 고유한 VcnId만 한 번씩 병렬 조회.
+
 ## v0.1.20
 
 ### VCN 컬럼: STATE 제거, IP RANGE 추가

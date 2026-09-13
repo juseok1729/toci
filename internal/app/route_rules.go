@@ -84,11 +84,11 @@ func renderRouteRules(name string, records [][]string) string {
 // Route Table, so model.go can drive both "v" and "e" without importing
 // the SDK's core package just for one type assertion.
 func routeRulesView(row registry.Row) (rendered string, records [][]string, name string, ok bool) {
-	rt, ok := row.Raw.(core.RouteTable)
+	rt, ok := row.Raw.(registry.RouteTableRow)
 	if !ok {
 		return "", nil, "", false
 	}
 	name = deref(rt.DisplayName)
-	records = routeRuleRecords(rt)
+	records = routeRuleRecords(rt.RouteTable)
 	return renderRouteRules(name, records), records, name, true
 }
