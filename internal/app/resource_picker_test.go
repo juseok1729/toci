@@ -85,6 +85,32 @@ func TestResourcePickerItemsFuzzyFilterPreservesCategoryOrder(t *testing.T) {
 	}
 }
 
+// TestResourcePickerItemsDoesNotMatchAcrossCategoryAndLabel reproduces a
+// reported bug: querying "vcn" matched "Governance/Compartments" — neither
+// "Governance" nor "Compartments" alone has anything to do with VCNs, but
+// concatenated ("Governance/Compartments") a fuzzy subsequence match for
+// "vcn" exists anyway (the "v"/"c" from Go[v]ernan[c]e, the "n" from
+// Compart[n]ents). Category and label must be matched separately.
+func TestResourcePickerItemsDoesNotMatchAcrossCategoryAndLabel(t *testing.T) {
+	resources := registry.All(nil)
+	items := resourcePickerItems(resources, "", "vcn")
+
+	for _, it := range items {
+		if it.key == "compartment" {
+			t.Errorf("querying %q matched Compartments — a cross-boundary false positive: %+v", "vcn", items)
+		}
+	}
+	found := false
+	for _, it := range items {
+		if it.key == "vcn" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("querying %q should still match VCNs itself: %+v", "vcn", items)
+	}
+}
+
 func TestResourcePickerItemsUnknownResourceFallsBackToOther(t *testing.T) {
 	items := resourcePickerItems([]registry.Resource{fakeResource{key: "mystery", label: "Mystery Kind"}}, "", "")
 

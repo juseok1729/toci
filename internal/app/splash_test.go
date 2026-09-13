@@ -43,7 +43,7 @@ func TestRenderSplash(t *testing.T) {
 }
 
 func TestSplashProgressStagesAndHold(t *testing.T) {
-	m := Model{mode: modeSplash}
+	m := Model{mode: modeSplash, resources: registry.All(nil)}
 	holdCap := splashStages[len(splashStages)-2]
 
 	seen := map[int]bool{}
@@ -75,8 +75,12 @@ func TestSplashProgressStagesAndHold(t *testing.T) {
 		mi, _ := m.Update(splashTickMsg{})
 		m = mi.(Model)
 	}
-	if m.mode != modeTable {
-		t.Errorf("mode = %v after splashDataReady, want modeTable", m.mode)
+	// Landing on the resource search (not modeTable directly) is
+	// deliberate — Compartments (resIdx's default) is an info-only view
+	// now (F6), so it's no longer a useful first screen; see
+	// splashTickMsg's own comment in model.go.
+	if m.mode != modePicker {
+		t.Errorf("mode = %v after splashDataReady, want modePicker (the resource search should open)", m.mode)
 	}
 	if m.splashProgress != 100 {
 		t.Errorf("splashProgress = %d when leaving splash, want 100", m.splashProgress)
