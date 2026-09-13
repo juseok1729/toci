@@ -9,7 +9,7 @@ import (
 
 func TestVcnLabel(t *testing.T) {
 	vcnID := "ocid1.vcn.oc1..aaa"
-	names := map[string]string{vcnID: "prod-vcn"}
+	names := map[string]vcnInfo{vcnID: {Name: "prod-vcn", Cidr: "10.0.0.0/16"}}
 
 	cases := []struct {
 		name string
@@ -30,7 +30,10 @@ func TestVcnLabel(t *testing.T) {
 
 func TestGroupRowsByVcn(t *testing.T) {
 	vcnA, vcnB := "ocid1.vcn.oc1..a", "ocid1.vcn.oc1..b"
-	names := map[string]string{vcnA: "vcn-a", vcnB: "vcn-b"}
+	names := map[string]vcnInfo{
+		vcnA: {Name: "vcn-a", Cidr: "10.0.0.0/16"},
+		vcnB: {Name: "vcn-b", Cidr: "10.1.0.0/16"},
+	}
 	rows := []registry.Row{
 		{ID: "s3", Name: "s3", Raw: core.Subnet{VcnId: &vcnB}},
 		{ID: "s1", Name: "s1", Raw: core.Subnet{VcnId: &vcnA}},
@@ -48,11 +51,19 @@ func TestGroupRowsByVcn(t *testing.T) {
 			t.Errorf("row %d: ID = %q, want %q", i, grouped[i].ID, id)
 		}
 	}
-	if _, ok := grouped[0].Raw.(vcnGroupHeader); !ok {
-		t.Errorf("row 0 (%q) is not a vcnGroupHeader", grouped[0].ID)
+	headerA, ok := grouped[0].Raw.(vcnGroupHeader)
+	if !ok {
+		t.Fatalf("row 0 (%q) is not a vcnGroupHeader", grouped[0].ID)
 	}
-	if _, ok := grouped[3].Raw.(vcnGroupHeader); !ok {
-		t.Errorf("row 3 (%q) is not a vcnGroupHeader", grouped[3].ID)
+	if headerA.cidr != "10.0.0.0/16" {
+		t.Errorf("vcn-a header cidr = %q, want %q", headerA.cidr, "10.0.0.0/16")
+	}
+	headerB, ok := grouped[3].Raw.(vcnGroupHeader)
+	if !ok {
+		t.Fatalf("row 3 (%q) is not a vcnGroupHeader", grouped[3].ID)
+	}
+	if headerB.cidr != "10.1.0.0/16" {
+		t.Errorf("vcn-b header cidr = %q, want %q", headerB.cidr, "10.1.0.0/16")
 	}
 
 	glyphs := treeGlyphs(grouped)
@@ -67,5 +78,34 @@ func TestGroupRowsByVcn(t *testing.T) {
 	}
 	if _, ok := glyphs["vcn-header:vcn-a"]; ok {
 		t.Errorf("header row should not get a tree glyph")
+	}
+}
+
+// TestTreeColumnsShowsVcnCidrOnHeaderRow is the actual feature request: the
+// VCN group header row should show that VCN's own CIDR and IP range in the
+// Subnet table's CIDR/IP RANGE columns, not just its name.
+func TestTreeColumnsShowsVcnCidrOnHeaderRow(t *testing.T) {
+	cols := registry.NewSubnetResource(nil).Columns()
+	decorated := treeColumns(cols, map[string]string{})
+
+	header := registry.Row{Raw: vcnGroupHeader{name: "vcn-a", cidr: "10.0.0.0/16"}}
+	get := func(title string) string {
+		for _, c := range decorated {
+			if c.Header == title {
+				return c.Get(header)
+			}
+		}
+		t.Fatalf("no %q column in Subnet's Columns()", title)
+		return ""
+	}
+
+	if got, want := get("NAME"), treeGroupIcon+"vcn-a"; got != want {
+		t.Errorf("NAME = %q, want %q", got, want)
+	}
+	if got, want := get("CIDR"), "10.0.0.0/16"; got != want {
+		t.Errorf("CIDR = %q, want %q", got, want)
+	}
+	if got, want := get("IP RANGE"), registry.CidrRange("10.0.0.0/16"); got != want {
+		t.Errorf("IP RANGE = %q, want %q", got, want)
 	}
 }

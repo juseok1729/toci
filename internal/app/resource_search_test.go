@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,8 +15,8 @@ func TestRenderResourceSearch(t *testing.T) {
 		resources: registry.All(nil),
 		width:     120,
 		height:    40,
-		picker:    newPicker(pickerResource, "Resources", []pickerItem{{key: "vcn", label: "VCNs"}, {key: "instance", label: "Instances"}}),
 	}
+	m.openResourceSearch()
 
 	for _, width := range []int{120, 60, 50, 20, 0} {
 		m.width = width
@@ -33,7 +34,13 @@ func TestRenderResourceSearch(t *testing.T) {
 	if !strings.Contains(out, "Resources") {
 		t.Error("renderResourceSearch missing title")
 	}
-	if !strings.Contains(out, "2/2") {
-		t.Error("renderResourceSearch missing match count")
+	wantCount := fmt.Sprintf("%d/%d", len(m.resources), len(m.resources))
+	if !strings.Contains(out, wantCount) {
+		t.Errorf("renderResourceSearch missing match count %q\nfull box:\n%s", wantCount, out)
+	}
+	for _, category := range []string{"Compute", "Network", "Database", "Governance"} {
+		if !strings.Contains(out, category) {
+			t.Errorf("renderResourceSearch missing category header %q\nfull box:\n%s", category, out)
+		}
 	}
 }

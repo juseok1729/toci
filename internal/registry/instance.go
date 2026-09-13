@@ -40,9 +40,11 @@ func (r *InstanceResource) Label() string { return "Instances" }
 // can both read from a single value.
 type instanceRow struct {
 	core.Instance
-	Metrics   instanceMetrics
-	IPs       instanceIPs
-	StorageGB *int64
+	Metrics    instanceMetrics
+	IPs        instanceIPs
+	Storage    instanceStorage
+	SubnetName string
+	OSVersion  string
 }
 
 func pctString(v *float64) string {
@@ -73,21 +75,6 @@ func ipString(ip string) string {
 	return ip
 }
 
-// shortAD trims the tenancy-prefixed availability domain (e.g.
-// "kIQq:AP-SEOUL-1-AD-1") down to just "AD-1" — the region qualifier is
-// redundant since everything shown is already scoped to one region.
-func shortAD(ad string) string {
-	if i := strings.LastIndex(ad, "AD-"); i >= 0 {
-		return ad[i:]
-	}
-	return ad
-}
-
-// shortFD trims "FAULT-DOMAIN-2" down to "FD-2".
-func shortFD(fd string) string {
-	return strings.Replace(fd, "FAULT-DOMAIN-", "FD-", 1)
-}
-
 func (r *InstanceResource) Columns() []Column {
 	return []Column{
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
@@ -95,6 +82,18 @@ func (r *InstanceResource) Columns() []Column {
 		}},
 		{Header: "STATE", Width: 10, Get: func(row Row) string {
 			return stateLabel(row.Raw.(instanceRow).LifecycleState)
+		}},
+		{Header: "OS", Width: 14, Get: func(row Row) string {
+			if v := row.Raw.(instanceRow).OSVersion; v != "" {
+				return v
+			}
+			return "-"
+		}},
+		{Header: "SUBNET", Width: 24, Get: func(row Row) string {
+			if v := row.Raw.(instanceRow).SubnetName; v != "" {
+				return v
+			}
+			return "-"
 		}},
 		{Header: "PUBLIC IP", Width: 15, Get: func(row Row) string {
 			return ipString(row.Raw.(instanceRow).IPs.Public)
@@ -119,16 +118,13 @@ func (r *InstanceResource) Columns() []Column {
 			}
 			return floatString(cfg.MemoryInGBs)
 		}},
-		{Header: "DISK(GB)", Width: 8, Get: func(row Row) string {
-			return int64String(row.Raw.(instanceRow).StorageGB)
+		{Header: "BOOT/BLK(GB)", Width: 12, Get: func(row Row) string {
+			s := row.Raw.(instanceRow).Storage
+			return int64String(s.BootGB) + "/" + int64String(s.BlockGB)
 		}},
-		{Header: "USAGE(CPU/MEM %)", Width: 18, Get: func(row Row) string {
+		{Header: "CPU/MEM%", Width: 10, Get: func(row Row) string {
 			m := row.Raw.(instanceRow).Metrics
 			return pctString(m.CPUPercent) + "/" + pctString(m.MemPercent)
-		}},
-		{Header: "DOMAIN(AD/FD)", Width: 14, Get: func(row Row) string {
-			inst := row.Raw.(instanceRow).Instance
-			return shortAD(deref(inst.AvailabilityDomain)) + "/" + shortFD(deref(inst.FaultDomain))
 		}},
 	}
 }
@@ -154,17 +150,21 @@ func (r *InstanceResource) List(ctx context.Context, s Scope, page string) ([]Ro
 		return nil, "", err
 	}
 
-	// Metrics, IPs, and storage are three independent lookups over the same
-	// compartment (each already best-effort — a failure just leaves that
-	// data blank rather than failing the listing) — fetched concurrently
-	// instead of one after another.
+	// Metrics, IPs, storage, subnet membership/names, and image labels are
+	// independent lookups over the same compartment/instance list (each
+	// already best-effort — a failure just leaves that data blank rather
+	// than failing the listing) — fetched concurrently instead of one
+	// after another.
 	var (
-		metrics map[string]instanceMetrics
-		ips     map[string]instanceIPs
-		storage map[string]int64
-		wg      sync.WaitGroup
+		metrics       map[string]instanceMetrics
+		ips           map[string]instanceIPs
+		storage       map[string]instanceStorage
+		instSubnetIDs map[string]string
+		subnetLabels  map[string]string
+		imageLabels   map[string]string
+		wg            sync.WaitGroup
 	)
-	wg.Add(3)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		if monClient, err := r.factory.Monitoring(s.Region); err == nil {
@@ -185,6 +185,15 @@ func (r *InstanceResource) List(ctx context.Context, s Scope, page string) ([]Ro
 			storage = fetchInstanceStorage(ctx, client, bsClient, s.CompartmentID, ads)
 		}
 	}()
+	go func() {
+		defer wg.Done()
+		instSubnetIDs, _ = InstanceSubnetIDs(ctx, client, s.CompartmentID)
+		subnetLabels, _ = subnetNames(ctx, vnClient, s.CompartmentID)
+	}()
+	go func() {
+		defer wg.Done()
+		imageLabels = fetchImageLabels(ctx, client, resp.Items)
+	}()
 	wg.Wait()
 
 	var allow map[string]bool
@@ -201,15 +210,13 @@ func (r *InstanceResource) List(ctx context.Context, s Scope, page string) ([]Ro
 		if allow != nil && !allow[id] {
 			continue
 		}
-		var storageGB *int64
-		if size, ok := storage[id]; ok {
-			storageGB = &size
-		}
 		rows = append(rows, Row{ID: id, Name: deref(i.DisplayName), TimeCreated: timeOf(i.TimeCreated), Raw: instanceRow{
-			Instance:  i,
-			Metrics:   metrics[id],
-			IPs:       ips[id],
-			StorageGB: storageGB,
+			Instance:   i,
+			Metrics:    metrics[id],
+			IPs:        ips[id],
+			Storage:    storage[id],
+			SubnetName: subnetLabels[instSubnetIDs[id]],
+			OSVersion:  imageLabels[deref(i.ImageId)],
 		}})
 	}
 

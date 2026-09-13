@@ -15,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	oci_bastion "github.com/oracle/oci-go-sdk/v65/bastion"
+	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/sahilm/fuzzy"
 	"gopkg.in/yaml.v3"
 
@@ -75,10 +76,11 @@ type rowsMsg struct {
 
 type rootNameMsg struct{ name string }
 
-// vcnNamesMsg carries the VcnID->DisplayName lookup fetchVcnNames builds,
-// for labeling the "g" grouping column on the Subnet view.
+// vcnNamesMsg carries the VcnID->vcnInfo lookup fetchVcnNames builds, for
+// labeling the "g" grouping header on the Subnet view (name, CIDR, IP
+// range).
 type vcnNamesMsg struct {
-	names map[string]string
+	names map[string]vcnInfo
 	err   error
 }
 
@@ -201,12 +203,41 @@ type Model struct {
 	err       error
 	statusMsg string
 
-	// autoRedirect is set right before a load that's allowed to jump away
-	// to VCNs if it comes back empty — descending into a compartment,
-	// basically. A manual switch back to Compartments (Tab) must NOT set
-	// this, or an already-empty compartment bounces straight back to VCNs
-	// and the user can never re-pick a sibling compartment.
-	autoRedirect bool
+	// compTree is the cached full compartment hierarchy (see
+	// compartment_tree.go), fetched once at startup — the "c" picker (F5),
+	// header breadcrumb, and subtree fan-out (F3) all read from this
+	// instead of re-listing compartments live.
+	compTree *compartmentTree
+	// tenancyName is the tenancy's resolved display name (rootNameMsg) —
+	// kept separately so it can be reapplied to compTree's root node
+	// whichever of the two async loads (root name, tree) finishes last.
+	tenancyName string
+
+	// recentList is the MRU compartment list behind the header's "Recent:"
+	// line and its "1".."9" hotkeys (F2) — loaded from disk in New(),
+	// persisted on every compartment switch.
+	recentList []recentEntry
+
+	// restoreCursorID is the previously-selected row's ID, set right
+	// before a compartment switch reload — the next rowsMsg tries to put
+	// the cursor back on the row with this ID (F1: "동일 리소스 ID가 있으면
+	// 커서 복원"), then clears it either way.
+	restoreCursorID string
+
+	// subtreeOn is the "C" toggle (F3): fetch the current compartment plus
+	// every descendant instead of just the one. subtreeGen/subtreeCancel
+	// guard/cancel the fan-out this kicks off (see subtree.go);
+	// subtreeTargets/subtreeRows/subtreeDone track its progress;
+	// subtreeSkipped counts compartments skipped for 401/404,
+	// subtreeErrMsg the last non-skip error.
+	subtreeOn      bool
+	subtreeGen     int
+	subtreeCancel  context.CancelFunc
+	subtreeTargets []subtreeTarget
+	subtreeRows    map[string][]registry.Row
+	subtreeDone    map[string]bool
+	subtreeSkipped int
+	subtreeErrMsg  string
 
 	// vcnFilterName is non-empty while the Instance table is scoped to one
 	// VCN (scope.VcnID set) via the "i" key on a VCN row — shown in the
@@ -284,10 +315,11 @@ type Model struct {
 	// meaningful on the Subnet view with no VCN filter active (see
 	// groupingActive); a VCN-filtered Subnet list is already one VCN.
 	groupByVcn bool
-	// vcnNames caches VcnID->DisplayName for the current compartment,
-	// fetched lazily by fetchVcnNames the first time groupByVcn turns on.
-	// Invalidated (set nil) on every compartment change.
-	vcnNames map[string]string
+	// vcnNames caches VcnID->vcnInfo (name, CIDR) for the current
+	// compartment, fetched lazily by fetchVcnNames the first time
+	// groupByVcn turns on. Invalidated (set nil) on every compartment
+	// change.
+	vcnNames map[string]vcnInfo
 
 	// exascaleNodeTree toggles ("g" key) expanding each Exadata VM cluster
 	// (Exascale) row into a tree with its DB nodes as children — the node
@@ -323,16 +355,16 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 		promptInput:     pi,
 		writeEnabled:    writeEnabled,
 		loading:         true,
-		autoRedirect:    true,
 		mode:            modeSplash,
 		splashPhrase:    splashPhrases[rand.Intn(len(splashPhrases))],
 		blinkEnabled:    true,
 		bastionSessions: map[string]cachedBastionSession{},
+		recentList:      loadRecent(profile),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.load(), m.fetchRootName(), splashTickCmd(), blinkTickCmd())
+	return tea.Batch(m.load(), m.fetchRootName(), m.fetchCompartmentTreeCmd(), splashTickCmd(), blinkTickCmd())
 }
 
 func (m Model) current() registry.Resource {
@@ -572,12 +604,12 @@ func (m *Model) continueSSHSetup() tea.Cmd {
 func (m Model) embTermSize() (cols, rows int) {
 	// Rendered inside a bordered box (see renderEmbTermBox), same layout
 	// shape as the resource table box: tableBoxOverhead off the width
-	// (border+padding), and the same -9 off the height as m.tableHeight —
+	// (border+padding), and the same -10 off the height as m.tableHeight —
 	// box border (2) + a blank line + the hint line below it is exactly
 	// the same 4-line overhead the table box's own border+blank+status
 	// line accounts for.
 	cols = m.mainContentWidth() - tableBoxOverhead
-	rows = m.height - 9
+	rows = m.height - 10
 	if cols < 10 {
 		cols = 10
 	}
@@ -675,6 +707,20 @@ func fitColumnWidth(header string, values []string, ceiling int) int {
 // column collapses to nothing readable.
 const tableColMinWidth = 3
 
+// protectedColumnHeaders are the column titles colorizeState/colorizeEdition
+// (state_color.go/edition_color.go) substring-match against the fully
+// rendered cell text, after the table itself has already truncated it.
+// Shrinking one of these below its content-fit width risks bubbles cutting
+// a value like "Running" down to "Runni…" — the match then silently fails
+// and the color just vanishes, with nothing visibly wrong to explain why.
+// fitColumns exempts them from shrinking; every other column absorbs the
+// difference instead.
+var protectedColumnHeaders = map[string]bool{
+	"STATE":   true,
+	"NODE":    true,
+	"EDITION": true,
+}
+
 // fitColumns computes each column's content-fit width (fitColumnWidth), then
 // scales every column proportionally against the available viewport width —
 // down if it's too wide, rather than leaving columns at full size and
@@ -684,7 +730,8 @@ const tableColMinWidth = 3
 // edge, and left values that would otherwise fit the screen capped at "…"
 // for no reason). Scaling every column by the same ratio, instead of
 // dumping all the slack or all the shrinkage into one column, keeps the
-// table's proportions the same as the terminal grows or shrinks.
+// table's proportions the same as the terminal grows or shrinks — except
+// when shrinking, where protectedColumnHeaders opt out (see shrinkColumns).
 func fitColumns(cols []registry.Column, colValues [][]string, available int) []int {
 	natural := make([]int, len(cols))
 	total := 0
@@ -694,6 +741,9 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 	}
 	if available <= 0 || total == available || len(cols) == 0 {
 		return natural
+	}
+	if total > available {
+		return shrinkColumns(cols, natural, available)
 	}
 
 	padding := 2 * len(cols)
@@ -717,11 +767,67 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 		widths[i] = nw
 		sum += nw
 	}
-	if total < available {
-		// Integer truncation during the scale-up can leave a few columns
-		// short of contentAvailable — hand the small remainder to the last
-		// column so the row still reaches the box's right edge exactly.
-		widths[len(widths)-1] += contentAvailable - sum
+	// Integer truncation during the scale-up can leave a few columns short
+	// of contentAvailable — hand the small remainder to the last column so
+	// the row still reaches the box's right edge exactly.
+	widths[len(widths)-1] += contentAvailable - sum
+	return widths
+}
+
+// shrinkColumns is fitColumns' too-wide case: every protectedColumnHeaders
+// column keeps its full natural width, and the shortfall is scaled
+// proportionally across the rest — the same distribute-by-ratio idea
+// fitColumns itself uses, just applied to a subset.
+func shrinkColumns(cols []registry.Column, natural []int, available int) []int {
+	widths := make([]int, len(cols))
+	protectedTotal, flexTotal, flexCount := 0, 0, 0
+	for i, c := range cols {
+		if protectedColumnHeaders[c.Header] {
+			widths[i] = natural[i]
+			protectedTotal += natural[i] + 2
+		} else {
+			flexTotal += natural[i] + 2
+			flexCount++
+		}
+	}
+
+	flexAvailable := available - protectedTotal
+	if flexCount == 0 || flexAvailable <= tableColMinWidth*flexCount {
+		// Nothing flexible to negotiate with, or the protected columns
+		// alone already fill (or exceed) the terminal — floor every
+		// flexible column and let bubbles clip the rest, same as an
+		// unworkably narrow terminal already does elsewhere.
+		for i, c := range cols {
+			if !protectedColumnHeaders[c.Header] {
+				widths[i] = tableColMinWidth
+			}
+		}
+		return widths
+	}
+
+	padding := 2 * flexCount
+	contentAvailable := flexAvailable - padding
+	if contentAvailable < tableColMinWidth*flexCount {
+		contentAvailable = tableColMinWidth * flexCount
+	}
+	contentTotal := flexTotal - padding
+	scale := float64(contentAvailable) / float64(contentTotal)
+
+	sum, lastFlex := 0, -1
+	for i, c := range cols {
+		if protectedColumnHeaders[c.Header] {
+			continue
+		}
+		nw := int(float64(natural[i]) * scale)
+		if nw < tableColMinWidth {
+			nw = tableColMinWidth
+		}
+		widths[i] = nw
+		sum += nw
+		lastFlex = i
+	}
+	if lastFlex >= 0 {
+		widths[lastFlex] += contentAvailable - sum
 	}
 	return widths
 }
@@ -758,7 +864,25 @@ func (m *Model) refreshTable(rows []registry.Row) {
 }
 
 func (m *Model) setDisplayRows() {
-	rows := applyFilter(m.rows, m.filterQuery)
+	var rows []registry.Row
+	if m.subtreeOn {
+		// Placeholder ("— loading —") rows go through applyFilter's fuzzy
+		// match on Name like anything else, so they'd otherwise wink in
+		// and out of a filtered view depending on how the placeholder text
+		// happens to score — keep them out of the filter and always shown.
+		var placeholders []registry.Row
+		var real []registry.Row
+		for _, r := range m.buildSubtreeRows() {
+			if isSubtreePlaceholderRow(r) {
+				placeholders = append(placeholders, r)
+			} else {
+				real = append(real, r)
+			}
+		}
+		rows = append(applyFilter(real, m.filterQuery), placeholders...)
+	} else {
+		rows = applyFilter(m.rows, m.filterQuery)
+	}
 	if m.groupingActive() {
 		rows = groupRowsByVcn(rows, m.vcnNames)
 	}
@@ -879,17 +1003,22 @@ func (m Model) exascaleNodeTreeActive() bool {
 // inside bubbles/table).
 func (m *Model) displayColumns() []registry.Column {
 	cols := m.current().Columns()
-	if m.groupingActive() {
-		return treeColumns(cols, treeGlyphs(m.displayRows))
+	switch {
+	case m.groupingActive():
+		cols = treeColumns(cols, treeGlyphs(m.displayRows))
+	case m.exascaleNodeTreeActive():
+		cols = exascaleTreeColumns(cols, exascaleTreeGlyphs(m.displayRows))
 	}
-	if m.exascaleNodeTreeActive() {
-		return exascaleTreeColumns(cols, exascaleTreeGlyphs(m.displayRows))
+	// Subtree mode's COMPARTMENT column goes in front of whatever the
+	// above already built, last — it needs the final column set to wrap.
+	if m.subtreeActive() {
+		cols = subtreeColumns(cols)
 	}
 	return cols
 }
 
 // fetchVcnNames lists every VCN in the current compartment and returns a
-// VcnID->DisplayName map, for vcnLabel to use once loaded.
+// VcnID->vcnInfo map, for vcnLabel/groupRowsByVcn to use once loaded.
 func (m Model) fetchVcnNames() tea.Cmd {
 	factory := m.factory
 	scope := m.scope
@@ -899,11 +1028,15 @@ func (m Model) fetchVcnNames() tea.Cmd {
 		if err != nil {
 			return vcnNamesMsg{err: err}
 		}
-		names := make(map[string]string, len(rows))
+		infos := make(map[string]vcnInfo, len(rows))
 		for _, row := range rows {
-			names[row.ID] = row.Name
+			cidr := ""
+			if v, ok := row.Raw.(core.Vcn); ok {
+				cidr = deref(v.CidrBlock)
+			}
+			infos[row.ID] = vcnInfo{Name: row.Name, Cidr: cidr}
 		}
-		return vcnNamesMsg{names: names}
+		return vcnNamesMsg{names: infos}
 	}
 }
 
@@ -932,7 +1065,6 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 	m.filterQuery = ""
 	m.loading = true
 	m.err = nil
-	m.autoRedirect = false
 	// A VCN filter stays active while moving between VCN-scoped resources
 	// (Subnets, Instances, ...), so hopping between them via "f" doesn't
 	// need re-picking the VCN each time. Switching to anything else
@@ -946,6 +1078,16 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 	if !isDrgDependent(m.resources[idx].Key()) {
 		m.scope.DrgID = ""
 		m.drgFilterName = ""
+	}
+	// Subtree mode (F3) fans out across every compartment in scope for
+	// whatever resource is selected — switching resource re-fans-out
+	// instead of a plain single-compartment load. startSubtreeFanout
+	// resets subtreeRows/subtreeTargets and calls setDisplayRows() itself;
+	// calling setDisplayRows() here first would render the *old* resource's
+	// leftover subtree rows through the *new* resource's columns (a type
+	// assertion mismatch that panics — see registry.Column.Get).
+	if m.subtreeOn {
+		return m.startSubtreeFanout()
 	}
 	m.setDisplayRows()
 	return m.load()
@@ -971,13 +1113,25 @@ func (m *Model) selectDrgFilter(id, name string) {
 }
 
 // openResourceSearch opens the "f"/":" centered fuzzy picker over every
-// resource kind.
+// resource kind, grouped into categories (resourcePickerItems) the same
+// way OCI's own console groups its left nav.
 func (m *Model) openResourceSearch() {
-	items := make([]pickerItem, len(m.resources))
-	for i, res := range m.resources {
-		items[i] = pickerItem{key: res.Key(), label: res.Label()}
+	resources := m.resources
+	currentKey := m.current().Key()
+	p := newPicker(pickerResource, "Resources", nil)
+	p.treeFilter = func(query string) []pickerItem {
+		return resourcePickerItems(resources, currentKey, query)
 	}
-	m.picker = newPicker(pickerResource, "Resources", items)
+	p.refilter()
+	// Land on the current resource rather than item 0 — with categories
+	// in the way, item 0 is now a header with nothing to select.
+	for i, it := range p.filtered {
+		if it.key == currentKey {
+			p.cursor = i
+			break
+		}
+	}
+	m.picker = p
 	m.mode = modePicker
 }
 
@@ -1016,60 +1170,6 @@ func (m *Model) exitDrg() tea.Cmd {
 	return m.switchResource(idx)
 }
 
-// switchToRootCompartments jumps back to the tenancy root and shows its
-// compartment list. Used when Compartments is picked via "f": the current
-// scope is usually already deep inside a leaf compartment (that's how we
-// got redirected to VCNs in the first place), so reloading Compartments at
-// the current scope would just show another empty table. Starting over
-// from the root lets the user drill back down from scratch.
-func (m *Model) switchToRootCompartments() tea.Cmd {
-	idx := -1
-	for i, r := range m.resources {
-		if r.Key() == "compartment" {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return nil
-	}
-	m.compPath = m.compPath[:1]
-	m.scope.CompartmentID = m.compPath[0].ID
-	m.vcnNames = nil
-	m.relayout()
-	return m.switchResource(idx)
-}
-
-func (m *Model) enterCompartment(id, name string) tea.Cmd {
-	m.compPath = append(m.compPath, crumb{ID: id, Name: name})
-	m.scope.CompartmentID = id
-	m.vcnNames = nil
-	m.rows = nil
-	m.filterQuery = ""
-	m.setDisplayRows()
-	m.loading = true
-	m.err = nil
-	m.autoRedirect = true
-	m.relayout()
-	return m.load()
-}
-
-func (m *Model) exitCompartment() tea.Cmd {
-	if len(m.compPath) <= 1 {
-		return nil
-	}
-	m.compPath = m.compPath[:len(m.compPath)-1]
-	m.scope.CompartmentID = m.compPath[len(m.compPath)-1].ID
-	m.vcnNames = nil
-	m.rows = nil
-	m.filterQuery = ""
-	m.setDisplayRows()
-	m.loading = true
-	m.err = nil
-	m.relayout()
-	return m.load()
-}
-
 // isRecentRow reports whether row was created within recentRowWindow.
 func (m Model) isRecentRow(row registry.Row) bool {
 	return row.TimeCreated.After(time.Now().Add(-recentRowWindow))
@@ -1092,7 +1192,11 @@ func (m *Model) selected() (registry.Row, bool) {
 	if i < 0 || i >= len(m.displayRows) {
 		return registry.Row{}, false
 	}
-	return m.displayRows[i], true
+	row := m.displayRows[i]
+	if isSubtreePlaceholderRow(row) {
+		return registry.Row{}, false
+	}
+	return row, true
 }
 
 func (m Model) actionable() (registry.Actionable, bool) {
@@ -1120,15 +1224,25 @@ func renderDetail(row registry.Row) string {
 	return string(b)
 }
 
+// openDetailView switches to the plain YAML detail view for row — shared by
+// the "d" key and, since F6, Enter on a Compartments row.
+func (m *Model) openDetailView(row registry.Row) {
+	m.mode = modeDetail
+	m.detail.SetContent(renderDetail(row))
+	m.detail.GotoTop()
+	m.detailExport = nil
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		// -9/-7: 4 header lines (Profile/Region/Resource/Compartment) + 1
-		// blank line, plus whatever else each pane reserves below that.
-		m.tableHeight = msg.Height - 9
+		// -10/-8: 5 header lines (Profile/Region/Resource/Compartment/
+		// Recent) + 1 blank line, plus whatever else each pane reserves
+		// below that.
+		m.tableHeight = msg.Height - 10
 		m.table.SetHeight(m.tableHeight)
-		m.detail.SetHeight(msg.Height - 7)
+		m.detail.SetHeight(msg.Height - 8)
 		m.relayout()
 		if m.embTerm != nil {
 			cols, rows := m.embTermSize()
@@ -1176,30 +1290,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.rows = msg.rows
 			m.setDisplayRows()
-			// A compartment with no sub-compartments would otherwise leave
-			// an empty table on screen; jump to VCNs instead — instances
-			// are scoped to a VCN in this app (see "i" in updateTable), so
-			// VCN is the more useful default landing resource. Only for
-			// loads that just descended into a compartment (autoRedirect) —
-			// not a manual switch back to Compartments, or this would just
-			// bounce straight back to VCNs on an already-empty leaf.
-			redirect := m.autoRedirect
-			m.autoRedirect = false
-			if redirect && len(msg.rows) == 0 && m.current().Key() == "compartment" {
-				for idx, r := range m.resources {
-					if r.Key() == "vcn" {
-						return m, m.switchResource(idx)
+			if m.restoreCursorID != "" {
+				for i, row := range m.displayRows {
+					if row.ID == m.restoreCursorID {
+						m.table.SetCursor(i)
+						break
 					}
 				}
+				m.restoreCursorID = ""
 			}
 		}
 		return m, nil
 
+	case compartmentTreeMsg:
+		return m.handleCompartmentTreeMsg(msg)
+
+	case subtreeRowsMsg:
+		return m.handleSubtreeRowsMsg(msg)
+
 	case rootNameMsg:
+		m.tenancyName = msg.name
 		if len(m.compPath) > 0 {
 			m.compPath[0].Name = msg.name
-			m.relayout()
 		}
+		if m.compTree != nil {
+			if n := m.compTree.node(m.compTree.root.ID); n != nil {
+				n.Name = msg.name
+			}
+		}
+		m.relayout()
 		return m, nil
 
 	case vcnNamesMsg:
@@ -1424,7 +1543,11 @@ func (m Model) updateEmbeddedTerm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q":
+	case "esc", "q", "v":
+		// "v" toggles: it opened this rules view (security-list/route-table
+		// — see updateTable's "v" case), so pressing it again closes the
+		// same way esc/q already do, rather than needing a different key
+		// to back out of what "v" got you into.
 		m.mode = modeTable
 		return m, nil
 	case "ctrl+c":
@@ -1455,6 +1578,29 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		return m.confirmPicker()
+	case "tab":
+		// Compartment-tree-only (F5): select + force subtree mode on. For
+		// every other picker kind, fall through — tab isn't bound there.
+		if m.picker.kind == pickerCompartment {
+			item, ok := m.picker.selected()
+			m.mode = modeTable
+			if !ok {
+				return m, nil
+			}
+			return m, m.switchCompartment(item.key, item.label, boolPtr(true))
+		}
+	case "p":
+		// Compartment-tree-only (F5): pin/unpin the highlighted node
+		// without closing the picker. Every other picker kind treats "p"
+		// as a normal filter character (falls through below).
+		if m.picker.kind == pickerCompartment {
+			if item, ok := m.picker.selected(); ok {
+				m.recentList = togglePin(m.recentList, item.key, item.label)
+				saveRecent(m.profile, m.recentList)
+				m.picker.refilter()
+			}
+			return m, nil
+		}
 	case "up", "ctrl+k":
 		if m.picker.cursor > 0 {
 			m.picker.cursor--
@@ -1477,10 +1623,17 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // click on an item (see updatePickerMouse).
 func (m Model) confirmPicker() (tea.Model, tea.Cmd) {
 	item, ok := m.picker.selected()
-	m.mode = modeTable
 	if !ok {
+		m.mode = modeTable
 		return m, nil
 	}
+	if m.picker.kind == pickerResource && item.key == "" {
+		// A category header row (see resourcePickerItems) — nothing to
+		// switch to, so leave the picker open rather than closing it on a
+		// no-op selection.
+		return m, nil
+	}
+	m.mode = modeTable
 	switch m.picker.kind {
 	case pickerRegion:
 		m.scope.Region = item.key
@@ -1523,14 +1676,12 @@ func (m Model) confirmPicker() (tea.Model, tea.Cmd) {
 		return m, m.continueSSHSetup()
 	case pickerResource:
 		for i, res := range m.resources {
-			if res.Key() != item.key {
-				continue
+			if res.Key() == item.key {
+				return m, m.switchResource(i)
 			}
-			if res.Key() == "compartment" {
-				return m, m.switchToRootCompartments()
-			}
-			return m, m.switchResource(i)
 		}
+	case pickerCompartment:
+		return m, m.switchCompartment(item.key, item.label, nil)
 	}
 	return m, nil
 }
@@ -1570,6 +1721,13 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !ok || click.Button != tea.MouseLeft {
 		return m, nil
 	}
+	// ponytail: click-to-select unsupported for the tree picker — its rows
+	// don't map onto pickerItemAt's flat-list math (scrolling window,
+	// variable indentation). Add if this picker turns out to need mouse
+	// support in practice; keyboard nav covers it for now.
+	if m.picker.kind == pickerCompartment {
+		return m, nil
+	}
 
 	var box string
 	var boxX, boxY, itemsTop int
@@ -1582,10 +1740,10 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		itemsTop = pickerResourceItemsTop
 	} else {
 		// Drawn inline as the main panel, itself preceded by the header
-		// block's 4 lines + 1 blank line and the "  " left margin — see
+		// block's 5 lines + 1 blank line and the "  " left margin — see
 		// View()'s modePicker branch and mouseBodyTop's own comment.
 		box = m.renderPicker()
-		boxX, boxY = 2, 5
+		boxX, boxY = 2, 6
 		itemsTop = pickerRegularItemsTop
 	}
 
@@ -1594,6 +1752,15 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.picker.cursor = i
+	if m.picker.kind == pickerResource {
+		// The resource-search tree has category headers sitting between
+		// real resources — a click there is easy to land near by accident,
+		// and confirming immediately closed the whole picker on those. Just
+		// move the cursor; Enter (or a second click landing on the same
+		// row, since re-clicking the highlighted row is now indistinguishable
+		// from clicking to select it) commits, same as keyboard nav.
+		return m, nil
+	}
 	return m.confirmPicker()
 }
 
@@ -1675,10 +1842,10 @@ func (m Model) updatePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // mouseBodyTop is the screen row where the table's first data row starts
-// in modeTable's default render path: 4 header lines (Profile/Region/
-// Resource/Compartment) + 1 blank line (see WindowSizeMsg's "-9" comment)
-// + the table box's own top border + its column-header row.
-const mouseBodyTop = 5 + 2
+// in modeTable's default render path: 5 header lines (Profile/Region/
+// Resource/Compartment/Recent) + 1 blank line (see WindowSizeMsg's "-10"
+// comment) + the table box's own top border + its column-header row.
+const mouseBodyTop = 6 + 2
 
 // updateMouse handles wheel scroll and left-click row selection over the
 // resource table. bubbles' table.Model (v1.0.0) has no mouse support and
@@ -1747,6 +1914,19 @@ func rowClipboardID(row registry.Row) (id string, ok bool) {
 	return row.ID, true
 }
 
+// bigScrollRows is how many rows "shift+up"/"shift+down" jump per press —
+// a LazyVim-style half-page scroll (like ctrl-d/ctrl-u) so paging through a
+// long resource list doesn't mean holding down the arrow key. visibleRows
+// is the table's own viewport height (m.table.Height()); at least 1 so a
+// very short table still moves.
+func bigScrollRows(visibleRows int) int {
+	n := visibleRows / 2
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	wasHelpOpen := m.showHelp
@@ -1763,6 +1943,14 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
+	case "shift+up":
+		m.table.MoveUp(bigScrollRows(m.table.Height()))
+		return m, nil
+
+	case "shift+down":
+		m.table.MoveDown(bigScrollRows(m.table.Height()))
+		return m, nil
+
 	case "space":
 		// wasHelpOpen, not m.showHelp — the block above already closed it
 		// unconditionally, so re-checking m.showHelp here would always see
@@ -1841,6 +2029,9 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.exascaleNodeTreeActive() {
 			rows = filterOutExascaleNodes(rows)
 		}
+		if m.subtreeActive() {
+			rows = filterOutSubtreePlaceholders(rows)
+		}
 		if err := exportCSV(path, m.current().Columns(), rows); err != nil {
 			m.statusMsg = "export failed: " + err.Error()
 			return m, nil
@@ -1858,6 +2049,35 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		return m, m.switchResource((m.resIdx + 1) % len(m.resources))
+
+	case "c":
+		m.openCompartmentPicker()
+		return m, nil
+
+	case "C":
+		m.subtreeOn = !m.subtreeOn
+		if !m.subtreeOn {
+			m.stopSubtreeFanout()
+			m.statusMsg = "subtree: off"
+			m.rows = nil
+			m.loading = true
+			return m, m.load()
+		}
+		if m.compTree == nil {
+			m.subtreeOn = false
+			m.statusMsg = "compartment tree still loading — try again shortly"
+			return m, nil
+		}
+		m.statusMsg = "subtree: on"
+		return m, m.startSubtreeFanout()
+
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		idx := int(key[0] - '1')
+		if idx >= len(m.recentList) {
+			return m, nil
+		}
+		e := m.recentList[idx]
+		return m, m.switchCompartment(e.ID, e.Name, boolPtr(e.Subtree))
 
 	case "a":
 		if !m.writeEnabled {
@@ -1926,14 +2146,26 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "v":
-		if m.current().Key() != "security-list" {
+		resKey := m.current().Key()
+		if resKey != "security-list" && resKey != "route-table" {
 			return m, nil
 		}
 		row, ok := m.selected()
 		if !ok {
 			return m, nil
 		}
-		content, records, name, ok := securityRulesView(row)
+		var content string
+		var records [][]string
+		var headers []string
+		var name, suffix string
+		switch resKey {
+		case "security-list":
+			content, records, name, ok = securityRulesView(row)
+			headers, suffix = securityRuleHeaders, "security-rules-"
+		case "route-table":
+			content, records, name, ok = routeRulesView(row)
+			headers, suffix = routeRuleHeaders, "route-rules-"
+		}
 		if !ok {
 			return m, nil
 		}
@@ -1941,8 +2173,8 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.detail.SetContent(content)
 		m.detail.GotoTop()
 		m.detailExport = &detailExportData{
-			filenameSuffix: "security-rules-" + name,
-			header:         securityRuleHeaders,
+			filenameSuffix: suffix + name,
+			header:         headers,
 			records:        records,
 		}
 		return m, nil
@@ -1963,10 +2195,7 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if _, isGroupHeader := row.Raw.(vcnGroupHeader); isGroupHeader {
 			return m, nil
 		}
-		m.mode = modeDetail
-		m.detail.SetContent(renderDetail(row))
-		m.detail.GotoTop()
-		m.detailExport = nil
+		m.openDetailView(row)
 		return m, nil
 
 	case "y":
@@ -1987,8 +2216,12 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.current().Key() {
+		// F6: Compartments is now an information-only view — Enter opens
+		// detail instead of changing the active compartment. Every context
+		// switch goes through "c" instead (F1), so there's exactly one way
+		// to do it.
 		case "compartment":
-			return m, m.enterCompartment(row.ID, row.Name)
+			m.openDetailView(row)
 		case "vcn":
 			m.selectVcnFilter(row.ID, row.Name)
 		case "drg":
@@ -1997,6 +2230,13 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "esc":
+		if m.subtreeOn && m.subtreeLoadedCount() < len(m.subtreeTargets) {
+			if m.subtreeCancel != nil {
+				m.subtreeCancel()
+			}
+			m.statusMsg = "subtree fetch cancelled"
+			return m, nil
+		}
 		if m.filterQuery != "" {
 			m.filterQuery = ""
 			m.setDisplayRows()
@@ -2008,9 +2248,6 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.scope.DrgID != "" {
 			return m, m.exitDrg()
 		}
-		if cmd := m.exitCompartment(); cmd != nil {
-			return m, cmd
-		}
 		return m, nil
 	}
 
@@ -2020,12 +2257,13 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // embTermContentRow/Col is the screen position of the embedded terminal's
-// own row/col (0,0) — the header block (5 lines) plus the terminal box's
-// top border, and the outer "  " margin plus the box's border+padding.
-// Same derivation as mouseBodyTop for the resource table; verified against
-// a rendered frame rather than just counted by hand.
+// own row/col (0,0) — the header block (6 lines, incl. the blank
+// separator) plus the terminal box's top border, and the outer "  " margin
+// plus the box's border+padding. Same derivation as mouseBodyTop for the
+// resource table; verified against a rendered frame rather than just
+// counted by hand.
 const (
-	embTermContentRow = 6
+	embTermContentRow = 7
 	embTermContentCol = 4
 )
 
@@ -2080,14 +2318,17 @@ func (m Model) viewContent() string {
 	}
 	b.WriteString(pathStyle.Render("  Compartment: "))
 	b.WriteString(headerValueStyle.Render(compartment))
+	b.WriteString(m.subtreeBadge())
+	b.WriteString("\n")
+	b.WriteString(m.renderRecentLine())
 	b.WriteString("\n\n")
 
-	// The resource-search picker floats centered over the table instead of
-	// replacing it, so switching on m.mode alone would wrongly blank the
-	// table out from under it — render as if modeTable and overlay it after
-	// composing the full view below.
+	// The resource-search and compartment-tree pickers float centered over
+	// the table instead of replacing it, so switching on m.mode alone
+	// would wrongly blank the table out from under them — render as if
+	// modeTable and overlay them after composing the full view below.
 	renderMode := m.mode
-	if renderMode == modePicker && m.picker.kind == pickerResource {
+	if renderMode == modePicker && (m.picker.kind == pickerResource || m.picker.kind == pickerCompartment) {
 		renderMode = modeTable
 	}
 
@@ -2167,9 +2408,12 @@ func (m Model) viewContent() string {
 	// -2: right margin so the logo isn't flush against the terminal edge,
 	// matching the table box's own right margin below.
 	out = overlayTopRight(out, cornerLogo, m.width-2)
-	out = overlayRightAt(out, headerValueStyle.Render(m.cornerSubtitle()), m.width-2, cornerLogoRows+1)
+	out = overlayRightAt(out, headerValueStyle.Render(m.cornerSubtitle()), m.width-2, cornerLogoRows+2)
 	if m.mode == modePicker && m.picker.kind == pickerResource {
 		out = overlayCenter(out, m.renderResourceSearch(), m.width, m.height)
+	}
+	if m.mode == modePicker && m.picker.kind == pickerCompartment {
+		out = overlayCenter(out, m.renderCompartmentPicker(), m.width, m.height)
 	}
 	if m.showHelp {
 		out = overlayBottomRight(out, renderHelpBox(m), m.width)
@@ -2189,12 +2433,13 @@ const cornerLogoArt = `▄▄▄ ▄▄  ▄▄▄ ▄
 // modeSplash — see View()'s early return there).
 var cornerLogo = splashLogoStyle.Render(cornerLogoArt)
 
-// cornerLogoRows is cornerLogoArt's own height — cornerSubtitle lands one
-// row past it (cornerLogoRows+1, a blank line of breathing room rather
-// than sitting flush under the wordmark), landing on the header's blank
-// separator line so it never fights the "Compartment" line right above it
-// for space. Derived from the art itself so resizing it doesn't leave the
-// subtitle floating in the wrong place.
+// cornerLogoRows is cornerLogoArt's own height — cornerSubtitle lands two
+// rows past it (cornerLogoRows+2: one row of breathing room rather than
+// sitting flush under the wordmark, plus one more for the "Recent:" line
+// F2 added to the header block), landing on the header's blank separator
+// line so it never fights the "Recent" line right above it for space.
+// Derived from the art itself so resizing it doesn't leave the subtitle
+// floating in the wrong place.
 var cornerLogoRows = strings.Count(cornerLogoArt, "\n") + 1
 
 // cornerSubtitle is the line under the corner wordmark: the release
@@ -2261,11 +2506,24 @@ func (m Model) renderResourceSearch() string {
 	b.WriteString(strings.Repeat("─", width-4))
 	b.WriteString("\n")
 	for i, it := range m.picker.filtered {
-		line := it.label
-		if i == m.picker.cursor {
-			line = selStyle.Render("› " + line)
-		} else {
-			line = "  " + line
+		// A category header (resourcePickerItems) has no key — nothing to
+		// select, so it's dimmed via titleStyle instead of plain text, but
+		// only when it isn't the highlighted row (selStyle's own styling
+		// wins there, same as any other row — see embedTwoInLine's doc for
+		// why nesting two Render calls' ANSI spans is worth avoiding).
+		isCategory := it.key == ""
+		text := it.glyph + it.label
+		if !isCategory && it.isCurrent {
+			text += " ●"
+		}
+		var line string
+		switch {
+		case i == m.picker.cursor:
+			line = selStyle.Render("› " + text)
+		case isCategory:
+			line = "  " + titleStyle.Render(text)
+		default:
+			line = "  " + text
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -2285,7 +2543,7 @@ func (m Model) renderResourceSearch() string {
 	topWidth := ansi.StringWidth(lines[0])
 	titleX := (topWidth - ansi.StringWidth(title)) / 2
 
-	count := statusStyle.Render(fmt.Sprintf(" %d/%d ", len(m.picker.filtered), len(m.picker.items)))
+	count := statusStyle.Render(fmt.Sprintf(" %d/%d ", pickerLeafCount(m.picker.filtered), len(m.resources)))
 	countX := topWidth - ansi.StringWidth(count) - 1
 	if countX > titleX+ansi.StringWidth(title) {
 		lines[0] = embedTwoInLine(lines[0], title, titleX, count, countX)
@@ -2313,6 +2571,19 @@ func (m Model) renderTableBox(tableView string) string {
 	x := (topWidth - ansi.StringWidth(title)) / 2
 	if x < 0 {
 		x = 0
+	}
+
+	// F3: "↻ n/total loaded" while a subtree fan-out is still in flight —
+	// disappears once every target compartment has reported back.
+	if m.subtreeOn {
+		if loaded, total := m.subtreeLoadedCount(), len(m.subtreeTargets); loaded < total {
+			badge := statusStyle.Render(fmt.Sprintf(" ↻ %d/%d loaded ", loaded, total))
+			badgeX := topWidth - ansi.StringWidth(badge) - 1
+			if badgeX > x+ansi.StringWidth(title) {
+				lines[0] = embedTwoInLine(lines[0], title, x, badge, badgeX)
+				return strings.Join(lines, "\n")
+			}
+		}
 	}
 	lines[0] = embedInLine(lines[0], title, x)
 	return strings.Join(lines, "\n")
@@ -2351,12 +2622,16 @@ func (m Model) helpEntries() []helpEntry {
 	add := func(key, desc string) { entries = append(entries, helpEntry{key, desc}) }
 
 	add("j/k, ↑↓", "move")
-	if m.current().Key() == "compartment" {
-		add("enter", "descend")
-	}
+	add("shift+↑/↓", "scroll half page")
 	add("d", "detail")
 	add("y", "copy OCID")
 	add("f / :", "search resources")
+	add("c", "compartment")
+	if m.subtreeOn {
+		add("C", "subtree: on")
+	} else {
+		add("C", "subtree: off")
+	}
 	add("/", "filter")
 	add("r", "region")
 	add("R", "refresh")
@@ -2403,11 +2678,13 @@ func (m Model) helpEntries() []helpEntry {
 	if m.current().Key() == "drg" {
 		add("enter / i", "filter by this DRG")
 	}
-	if m.current().Key() == "security-list" {
+	if key := m.current().Key(); key == "security-list" || key == "route-table" {
 		add("v", "view rules")
 	}
-	if len(m.compPath) > 1 || m.vcnFilterName != "" || m.drgFilterName != "" {
+	if m.vcnFilterName != "" || m.drgFilterName != "" {
 		add("esc", "up")
+	} else if m.subtreeOn && m.subtreeLoadedCount() < len(m.subtreeTargets) {
+		add("esc", "cancel subtree fetch")
 	}
 	add("q", "quit")
 	return entries
@@ -2442,16 +2719,65 @@ func renderStatusMsg(msg string) string {
 
 // renderStatusLine is deliberately terse now — the full shortcut list
 // lives in the space-bar popup (help.go) instead of a single hard-to-scan
-// gray line spanning the terminal on every screen.
+// gray line spanning the terminal on every screen. "c: compartment" and
+// "C: subtree ..." are the two exceptions (doc F1-F3): compartment context
+// switching is common enough, and the subtree on/off state needs to be
+// visible without opening the popup, that they earn a permanent spot here.
 func (m Model) renderStatusLine() string {
 	parts := []string{fmt.Sprintf("%d items", len(m.displayRows))}
 	if m.filterQuery != "" {
 		parts = append(parts, fmt.Sprintf("filter: %q", m.filterQuery))
 	}
-	parts = append(parts, "space: shortcuts")
+	parts = append(parts, "space: shortcuts", "c: compartment")
+	if m.subtreeOn {
+		parts = append(parts, "C: subtree on")
+	} else {
+		parts = append(parts, "C: subtree off")
+	}
 	line := statusStyle.Render(strings.Join(parts, " · "))
 	if m.statusMsg != "" {
 		line += statusStyle.Render(" · ") + m.bastionSpinnerPrefix() + renderStatusMsg(m.statusMsg)
 	}
 	return line
+}
+
+// subtreeBadge renders the "⊕ +N sub[, M skipped]" suffix for the
+// Compartment header line while subtree mode (F3) is on — the same green
+// as the footer's "C: subtree on" (doc: "모드는 두 곳에서 알린다").
+func (m Model) subtreeBadge() string {
+	if !m.subtreeOn {
+		return ""
+	}
+	n := 0
+	if base := m.compTree.node(m.scope.CompartmentID); base != nil {
+		n = base.subtreeCount()
+	}
+	badge := fmt.Sprintf(" ⊕ +%d sub", n)
+	if m.subtreeSkipped > 0 {
+		badge += fmt.Sprintf(", %d skipped", m.subtreeSkipped)
+	}
+	return successStyle.Render(badge)
+}
+
+// renderRecentLine draws the header's "Recent:" line (F2): up to
+// recentMaxSlots MRU compartments, "1".."9" in the table-header yellow
+// (helpKeyStyle, same color newTable's own header uses), names in the
+// default header color, "⊕" suffixed for one last visited in subtree mode.
+func (m Model) renderRecentLine() string {
+	prefix := pathStyle.Render("  Recent:     ")
+	if len(m.recentList) == 0 {
+		return prefix + statusStyle.Render(`(none yet — "c" to pick a compartment)`)
+	}
+	parts := make([]string, 0, len(m.recentList))
+	for i, e := range m.recentList {
+		if i >= recentMaxSlots {
+			break
+		}
+		name := e.Name
+		if e.Subtree {
+			name += "⊕"
+		}
+		parts = append(parts, helpKeyStyle.Render(fmt.Sprintf("%d", i+1))+" "+headerValueStyle.Render(name))
+	}
+	return prefix + strings.Join(parts, "  ")
 }

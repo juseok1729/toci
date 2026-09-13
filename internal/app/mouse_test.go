@@ -10,8 +10,8 @@ import (
 )
 
 func TestMouseClickRow(t *testing.T) {
-	// Cursor is row 5, drawn on screen line 10, table body is 20 lines tall.
-	const cursorY, cursorRow, bodyHeight = 10, 5, 20
+	// Cursor is row 5, drawn on screen line 11, table body is 20 lines tall.
+	const cursorY, cursorRow, bodyHeight = 11, 5, 20
 
 	cases := []struct {
 		name    string
@@ -102,9 +102,9 @@ func TestUpdatePickerMouseClickSelectsAndConfirms(t *testing.T) {
 	}
 
 	// The regular (non-resource-search) picker box sits at the fixed
-	// (2, 5) screen offset — see updatePickerMouse — with its own top
+	// (2, 6) screen offset — see updatePickerMouse — with its own top
 	// border on the first line, so item i lands at boxY + 1 + itemsTop + i.
-	clickY := 5 + 1 + pickerRegularItemsTop + 1 // second item ("us-phoenix-1")
+	clickY := 6 + 1 + pickerRegularItemsTop + 1 // second item ("us-phoenix-1")
 	mm, cmd := m.Update(tea.MouseClickMsg{X: 4, Y: clickY, Button: tea.MouseLeft})
 	m2 := mm.(Model)
 
@@ -116,5 +116,44 @@ func TestUpdatePickerMouseClickSelectsAndConfirms(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("expected a load command after the click confirmed a region")
+	}
+}
+
+// TestUpdatePickerMouseClickOnResourceSearchSelectsWithoutConfirming
+// guards a reported UX bug: clicking a row in the "f" resource-search tree
+// used to switch resources immediately, same as the regular pickers above —
+// but the tree's category headers sit between real resources, making a
+// stray click easy to land on and instantly commit. A click there should
+// only move the cursor; Enter confirms, like keyboard navigation already
+// does.
+func TestUpdatePickerMouseClickOnResourceSearchSelectsWithoutConfirming(t *testing.T) {
+	m := Model{
+		resources: registry.All(nil),
+		width:     120,
+		height:    40,
+		mode:      modePicker,
+		table:     newTable(20),
+	}
+	m.openResourceSearch()
+
+	box := m.renderResourceSearch()
+	boxWidth, boxLines := overlayBoxDims(box)
+	boxX := (m.width - boxWidth) / 2
+	boxY := (m.height - len(boxLines)) / 3
+
+	// Item index 1 is the first real resource — index 0 is always a
+	// category header (see resourcePickerItems).
+	clickY := boxY + 1 + pickerResourceItemsTop + 1
+	mm, cmd := m.Update(tea.MouseClickMsg{X: boxX + 4, Y: clickY, Button: tea.MouseLeft})
+	m2 := mm.(Model)
+
+	if m2.mode != modePicker {
+		t.Fatalf("mode after click = %v, want modePicker (a click should only select, not confirm)", m2.mode)
+	}
+	if m2.picker.cursor != 1 {
+		t.Errorf("picker.cursor = %d, want 1 (the clicked row)", m2.picker.cursor)
+	}
+	if cmd != nil {
+		t.Error("expected no command — a click on the resource search should not switch resources yet")
 	}
 }
