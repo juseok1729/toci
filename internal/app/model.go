@@ -254,6 +254,15 @@ type Model struct {
 	// to export as CSV.
 	detailExport *detailExportData
 
+	// resourceMap is non-nil while modeDetail is showing the "M" resource
+	// map — updateDetail checks it to route j/k to
+	// resourceMapSelected (which subnet's path through to its gateways is
+	// highlighted) instead of the viewport's own scrolling, and re-renders
+	// on every move. Cleared on leaving modeDetail so those keys go back
+	// to scrolling for every other kind of detail content.
+	resourceMap         *resourceMapData
+	resourceMapSelected int
+
 	// showHelp toggles the LazyVim-style which-key popup (space bar). Not
 	// a mode: other keys keep working normally while it's shown (and
 	// close it after acting), so it's just an overlay flag checked at
@@ -261,14 +270,15 @@ type Model struct {
 	showHelp bool
 
 	// splashProgress/splashFrame drive the startup splash screen's fake
-	// progress bar and spinner — "fake" because the only real signal is a
-	// single List call finishing; a bar that jumps through a couple of
-	// stages (see splashStages/splashStageTicks in splash.go) reads as
-	// alive instead of stalling on an indeterminate wait. splashProgress is
-	// held at the second-to-last stage until splashDataReady (the real load
-	// finished), so on a fast connection the splash still holds for a
-	// minimum ~1.2s instead of flashing by in whatever the API round-trip
-	// happened to take.
+	// progress bar and spinner — "fake" because the only real signal is
+	// fetchRootName's GetCompartment call finishing (there's no initial
+	// resource load to wait on — see Init()'s own doc); a bar that jumps
+	// through a couple of stages (see splashStages/splashStageTicks in
+	// splash.go) reads as alive instead of stalling on an indeterminate
+	// wait. splashProgress is held at the second-to-last stage until
+	// splashDataReady (the real fetch finished), so on a fast connection
+	// the splash still holds for a minimum ~1.2s instead of flashing by in
+	// whatever the API round-trip happened to take.
 	splashProgress  int
 	splashFrame     int
 	splashDataReady bool
@@ -354,7 +364,6 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 		confirmInput:    ci,
 		promptInput:     pi,
 		writeEnabled:    writeEnabled,
-		loading:         true,
 		mode:            modeSplash,
 		splashPhrase:    splashPhrases[rand.Intn(len(splashPhrases))],
 		blinkEnabled:    true,
@@ -363,8 +372,13 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 	}
 }
 
+// Init deliberately doesn't load anything into the table (no m.load()) —
+// like k9s/taws, the first screen is an empty table with the resource
+// search open (see splashTickMsg), not whatever resIdx happens to default
+// to. fetchRootName still runs up front since the header's "Compartment:"
+// line needs it regardless of which resource gets picked first.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.load(), m.fetchRootName(), m.fetchCompartmentTreeCmd(), splashTickCmd(), blinkTickCmd())
+	return tea.Batch(m.fetchRootName(), m.fetchCompartmentTreeCmd(), splashTickCmd(), blinkTickCmd())
 }
 
 func (m Model) current() registry.Resource {
@@ -1227,8 +1241,16 @@ func renderDetail(row registry.Row) string {
 // openDetailView switches to the plain YAML detail view for row — shared by
 // the "d" key and, since F6, Enter on a Compartments row.
 func (m *Model) openDetailView(row registry.Row) {
+	m.openDetailContent(renderDetail(row))
+}
+
+// openDetailContent switches to modeDetail showing content verbatim — the
+// resource map ("M") uses this directly (it's already a fully rendered
+// string, not a row to YAML-marshal); openDetailView is just this plus
+// the YAML rendering step.
+func (m *Model) openDetailContent(content string) {
 	m.mode = modeDetail
-	m.detail.SetContent(renderDetail(row))
+	m.detail.SetContent(content)
 	m.detail.GotoTop()
 	m.detailExport = nil
 }
@@ -1265,7 +1287,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splashSpinnerFrame++
 		}
 		if m.splashDataReady && m.splashProgress >= 100 {
-			m.mode = modeTable
+			// Compartments (resIdx's default) is an info-only view now
+			// (F6) rather than the old navigation entry point, so landing
+			// on it first has nothing useful to do — open the resource
+			// search immediately instead, prompting a real pick.
+			m.openResourceSearch()
 			return m, nil
 		}
 		return m, splashTickCmd()
@@ -1282,9 +1308,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, bastionSpinnerTickCmd()
 
 	case rowsMsg:
-		if m.mode == modeSplash {
-			m.splashDataReady = true
-		}
 		m.loading = false
 		m.err = msg.err
 		if msg.err == nil {
@@ -1319,6 +1342,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.relayout()
+		// The splash screen's "real data" gate: with no initial m.load()
+		// (see Init()), this — not a rows fetch — is the first real
+		// round-trip to finish, so it's what unblocks leaving splash.
+		if m.mode == modeSplash {
+			m.splashDataReady = true
+		}
 		return m, nil
 
 	case vcnNamesMsg:
@@ -1368,6 +1397,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.statusMsg = "diagram written to " + msg.path
+		return m, nil
+
+	case resourceMapMsg:
+		if msg.err != nil {
+			m.statusMsg = "resource map failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.statusMsg = ""
+		m.resourceMap = &msg.data
+		m.resourceMapSelected = 0
+		if len(msg.data.subnets) == 0 {
+			m.resourceMapSelected = -1
+		}
+		m.openDetailContent(renderResourceMap(msg.data, m.resourceMapSelected))
 		return m, nil
 
 	case bastionsMsg:
@@ -1549,9 +1592,22 @@ func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// same way esc/q already do, rather than needing a different key
 		// to back out of what "v" got you into.
 		m.mode = modeTable
+		m.resourceMap = nil
 		return m, nil
 	case "ctrl+c":
 		return m, tea.Quit
+	case "up", "k":
+		if m.resourceMap != nil && m.resourceMapSelected > 0 {
+			m.resourceMapSelected--
+			m.detail.SetContent(renderResourceMap(*m.resourceMap, m.resourceMapSelected))
+			return m, nil
+		}
+	case "down", "j":
+		if m.resourceMap != nil && m.resourceMapSelected < len(m.resourceMap.subnets)-1 {
+			m.resourceMapSelected++
+			m.detail.SetContent(renderResourceMap(*m.resourceMap, m.resourceMapSelected))
+			return m, nil
+		}
 	case "e":
 		if m.detailExport == nil {
 			return m, nil
@@ -2187,6 +2243,14 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "building diagram..."
 		return m, m.buildVcnDiagram()
 
+	case "M":
+		if m.vcnFilterName == "" {
+			m.statusMsg = "pick a VCN first (\"i\" on a VCN row) to view its resource map"
+			return m, nil
+		}
+		m.statusMsg = "building resource map..."
+		return m, m.buildResourceMap()
+
 	case "d":
 		row, ok := m.selected()
 		if !ok {
@@ -2338,6 +2402,9 @@ func (m Model) viewContent() string {
 		main.WriteString(m.detail.View())
 		main.WriteString("\n")
 		hint := "esc: back"
+		if m.resourceMap != nil {
+			hint += " · j/k: select subnet"
+		}
 		if m.detailExport != nil {
 			hint += " · e: export csv"
 		}
@@ -2657,6 +2724,7 @@ func (m Model) helpEntries() []helpEntry {
 	add("e", "export csv")
 	if m.vcnFilterName != "" {
 		add("m", "export diagram")
+		add("M", "resource map")
 	}
 	if _, ok := m.actionable(); ok {
 		if m.writeEnabled {

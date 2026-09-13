@@ -37,6 +37,7 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 - **Security List rule viewer** — ingress/egress rules as a readable table instead of raw nested YAML.
 - **CSV export** (UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including the Security List rules table.
 - **Mermaid diagram export** — generates a `.mmd` flowchart (`graph TD` + nested `subgraph`) of a VCN's subnets, the Instances/DB Systems/Autonomous DBs/Exadata VM Clusters in each, and any DRGs attached to the VCN.
+- **Resource map** — an in-app, AWS-console-style view of a VCN's Subnets, the Route Tables they use, and the Internet/NAT/Service/Local Peering Gateways and DRGs those route tables target, connected column to column.
 - **LazyVim-style shortcuts popup** — press `space` for a which-key-style overlay of every binding that applies to the current screen.
 - **Region switcher**, local fuzzy filter, live refresh.
 - **Bastion SSH** — resolve an instance's private IP, create a Bastion session, and drop straight into an SSH shell.
@@ -113,6 +114,7 @@ On startup you'll land on the tenancy root's Compartments list. Drill down with 
 | `i` | *(on a VCN row)* Filter all VCN-scoped resources to this VCN, same as `Enter`, then opens the resource search to pick one |
 | `v` | *(on a Security List row)* View ingress/egress rules as a table |
 | `m` | *(with a VCN filter active)* Export a Mermaid diagram of the VCN's topology |
+| `M` | *(with a VCN filter active)* View the VCN's resource map (Subnets/Route Tables/Network Connections) |
 | `a` | *(Instance, `--write` only)* Action menu — start/stop, with a type-to-confirm prompt |
 | `s` | *(Instance, `--write` only)* SSH via Bastion |
 | `space` | Toggle the shortcuts popup |

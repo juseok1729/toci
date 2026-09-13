@@ -1,8 +1,6 @@
 package app
 
 import (
-	"sort"
-
 	"github.com/sahilm/fuzzy"
 
 	"toci/internal/registry"
@@ -29,10 +27,12 @@ var resourceCategories = []struct {
 // resourcePickerItems flattens resources into the tree picker's rows:
 // a category header (key "") followed by each of its resources, connector
 // glyphs included. currentKey marks the active resource with "●". With a
-// non-empty query, only resources whose "Category/Label" fuzzy-matches are
-// kept — since the category name is baked into that match string, typing
-// a category name (e.g. "network") surfaces every resource under it, and
-// a resource name still keeps its own category header for context.
+// non-empty query, a leaf is kept if the query fuzzy-matches its own label
+// or its category's name — checked as two separate matches, not one
+// against a concatenated "Category/Label" string, which let a query match
+// by pulling characters from both halves at once (e.g. "vcn" matching
+// "Go[v]ernan[c]e/Compart[n]ents" — a real reported bug, since neither
+// "Governance" nor "Compartments" has anything to do with VCNs).
 //
 // Any resource key registry.All() defines but resourceCategories doesn't
 // mention (a new resource kind someone forgot to categorize here) is filed
@@ -65,23 +65,28 @@ func resourcePickerItems(resources []registry.Resource, currentKey, query string
 
 	kept := leaves
 	if query != "" {
-		paths := make([]string, len(leaves))
+		labels := make([]string, len(leaves))
+		categories := make([]string, len(leaves))
 		for i, l := range leaves {
-			paths[i] = l.category + "/" + l.res.Label()
+			labels[i] = l.res.Label()
+			categories[i] = l.category
 		}
-		matches := fuzzy.Find(query, paths)
-		// fuzzy.Find ranks by score, not original position — sort back to
-		// original order first, or a query would scramble categories
-		// together (e.g. interleave Network and Database rows) instead of
-		// just narrowing which ones show.
-		idx := make([]int, len(matches))
-		for i, mm := range matches {
-			idx[i] = mm.Index
+		matched := make([]bool, len(leaves))
+		for _, mm := range fuzzy.Find(query, labels) {
+			matched[mm.Index] = true
 		}
-		sort.Ints(idx)
-		kept = make([]leaf, len(idx))
-		for i, li := range idx {
-			kept[i] = leaves[li]
+		for _, mm := range fuzzy.Find(query, categories) {
+			matched[mm.Index] = true
+		}
+		// Iterating matched in index order (rather than sorting fuzzy.Find's
+		// own score-ranked results) keeps leaves in resourceCategories'
+		// declared order — a query must narrow which rows show, not
+		// reshuffle categories together.
+		kept = nil
+		for i, ok := range matched {
+			if ok {
+				kept = append(kept, leaves[i])
+			}
 		}
 	}
 
