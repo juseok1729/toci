@@ -10,8 +10,8 @@ import (
 )
 
 func TestMouseClickRow(t *testing.T) {
-	// Cursor is row 5, drawn on screen line 10, table body is 20 lines tall.
-	const cursorY, cursorRow, bodyHeight = 10, 5, 20
+	// Cursor is row 5, drawn on screen line 11, table body is 20 lines tall.
+	const cursorY, cursorRow, bodyHeight = 11, 5, 20
 
 	cases := []struct {
 		name    string
@@ -102,9 +102,9 @@ func TestUpdatePickerMouseClickSelectsAndConfirms(t *testing.T) {
 	}
 
 	// The regular (non-resource-search) picker box sits at the fixed
-	// (2, 5) screen offset — see updatePickerMouse — with its own top
+	// (2, 6) screen offset — see updatePickerMouse — with its own top
 	// border on the first line, so item i lands at boxY + 1 + itemsTop + i.
-	clickY := 5 + 1 + pickerRegularItemsTop + 1 // second item ("us-phoenix-1")
+	clickY := 6 + 1 + pickerRegularItemsTop + 1 // second item ("us-phoenix-1")
 	mm, cmd := m.Update(tea.MouseClickMsg{X: 4, Y: clickY, Button: tea.MouseLeft})
 	m2 := mm.(Model)
 

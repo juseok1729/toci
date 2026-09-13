@@ -14,15 +14,25 @@ const (
 	pickerSSHMode
 	pickerSSHKey
 	pickerResource
+	pickerCompartment
 )
 
 type pickerItem struct {
 	key   string
 	label string
+
+	// The fields below are set only for pickerCompartment items (see
+	// compartment_picker.go) — every other picker kind leaves them zero.
+	glyph     string // precomputed tree indentation + connector, e.g. "│  ├─ "
+	subCount  int    // descendant count, shown as "⊕ n"
+	desc      string // compartment description, shown under the highlighted row
+	isCurrent bool   // this is the active compartment ("●")
+	pinned    bool   // pinned in the MRU list
 }
 
 // picker is a fuzzy-filtered list overlay reused for the region switcher,
-// the action menu, the bastion picker, and the "f" resource search.
+// the action menu, the bastion picker, the "f" resource search, and the
+// "c" compartment tree picker.
 type picker struct {
 	kind     pickerKind
 	title    string
@@ -30,6 +40,13 @@ type picker struct {
 	items    []pickerItem
 	filtered []pickerItem
 	cursor   int
+
+	// treeFilter, set only for pickerCompartment, replaces the default
+	// flat fuzzy-over-labels matching below: a compartment tree needs to
+	// keep a matched node's ancestors visible (so same-named compartments
+	// stay distinguishable by path) and carry per-node tree glyphs/badges,
+	// none of which a flat []pickerItem fuzzy match can express.
+	treeFilter func(query string) []pickerItem
 }
 
 func newPicker(kind pickerKind, title string, items []pickerItem) picker {
@@ -42,7 +59,9 @@ func newPicker(kind pickerKind, title string, items []pickerItem) picker {
 
 func (p *picker) refilter() {
 	q := p.input.Value()
-	if q == "" {
+	if p.treeFilter != nil {
+		p.filtered = p.treeFilter(q)
+	} else if q == "" {
 		p.filtered = p.items
 	} else {
 		labels := make([]string, len(p.items))

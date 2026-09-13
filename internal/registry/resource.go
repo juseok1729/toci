@@ -36,6 +36,14 @@ type Row struct {
 	Name        string
 	Raw         any
 	TimeCreated time.Time
+
+	// CompartmentLabel is set only while a subtree fan-out (toci's "C"
+	// compartment-subtree mode) is active: the row's source compartment,
+	// as a path relative to the compartment the fan-out started from
+	// (e.g. "hub-and-spoke", "db/backup"). Empty otherwise, and left empty
+	// on synthesized child rows (tree/group children), which have no
+	// compartment of their own to show.
+	CompartmentLabel string
 }
 
 // Column renders one field of a Row into table text. Get is a closure over
