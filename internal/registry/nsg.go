@@ -23,9 +23,6 @@ func (r *NsgResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(core.NetworkSecurityGroup).DisplayName)
 		}},
-		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return stateLabel(row.Raw.(core.NetworkSecurityGroup).LifecycleState)
-		}},
 	}
 }
 

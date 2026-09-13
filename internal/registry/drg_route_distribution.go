@@ -24,9 +24,6 @@ func (r *DrgRouteDistributionResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(core.DrgRouteDistribution).DisplayName)
 		}},
-		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return stateLabel(row.Raw.(core.DrgRouteDistribution).LifecycleState)
-		}},
 		{Header: "TYPE", Width: 8, Get: func(row Row) string {
 			return stateLabel(row.Raw.(core.DrgRouteDistribution).DistributionType)
 		}},

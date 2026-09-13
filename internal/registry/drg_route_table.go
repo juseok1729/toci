@@ -24,9 +24,6 @@ func (r *DrgRouteTableResource) Columns() []Column {
 		{Header: "NAME", Width: 30, Get: func(row Row) string {
 			return deref(row.Raw.(core.DrgRouteTable).DisplayName)
 		}},
-		{Header: "STATE", Width: 12, Get: func(row Row) string {
-			return stateLabel(row.Raw.(core.DrgRouteTable).LifecycleState)
-		}},
 		{Header: "ECMP", Width: 6, Get: func(row Row) string {
 			ecmp := row.Raw.(core.DrgRouteTable).IsEcmpEnabled
 			if ecmp != nil && *ecmp {
