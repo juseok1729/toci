@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/oracle/oci-go-sdk/v65/core"
 
 	"toci/internal/registry"
@@ -191,6 +192,48 @@ func TestSwitchCompartmentTabForcesSubtreeOn(t *testing.T) {
 	}
 	if len(m.recentList) != 1 || !m.recentList[0].Subtree {
 		t.Errorf("recentList entry should record Subtree:true, got %v", m.recentList)
+	}
+}
+
+// TestSwitchCompartmentRefetchesVcnNamesWhenGroupingActive reproduces a
+// reported bug: switching compartment invalidates m.vcnNames (it's scoped
+// to the old compartment), but nothing re-fetched it — so with the Subnet
+// view's VCN grouping ("g") already on, its header rows fell back to raw
+// VCN OCIDs (vcnLabel's fallback) instead of names until "g" happened to
+// be toggled again. switchCompartment must batch in a fetchVcnNames() Cmd
+// whenever grouping is active for the compartment it's switching to.
+//
+// Calling the returned Cmd is safe here specifically because compactCmds
+// (bubbletea's tea.Batch) wraps 2+ commands in a closure that just returns
+// them as a BatchMsg without invoking them — actually running the reload
+// itself would need a real factory, not the nil one registry.All(nil)
+// uses for its resources here.
+func TestSwitchCompartmentRefetchesVcnNamesWhenGroupingActive(t *testing.T) {
+	resources := registry.All(nil)
+	subnetIdx := -1
+	for i, r := range resources {
+		if r.Key() == "subnet" {
+			subnetIdx = i
+		}
+	}
+	if subnetIdx < 0 {
+		t.Fatal("expected subnet resource to be registered")
+	}
+
+	m := Model{
+		resources:  resources,
+		resIdx:     subnetIdx,
+		scope:      registry.Scope{Region: "us-ashburn-1", CompartmentID: "a"},
+		table:      newTable(20),
+		compTree:   buildTestTree(),
+		groupByVcn: true,
+	}
+	cmd := m.switchCompartment("c", "c", nil)
+	if cmd == nil {
+		t.Fatal("switchCompartment returned a nil Cmd")
+	}
+	if _, ok := cmd().(tea.BatchMsg); !ok {
+		t.Errorf("switchCompartment() with VCN grouping active did not batch in a vcnNames refetch (want tea.BatchMsg)")
 	}
 }
 

@@ -122,9 +122,19 @@ func (m *Model) switchCompartment(id, name string, subtree *bool) tea.Cmd {
 	m.recentList = pushRecent(m.recentList, id, name, m.subtreeOn)
 	saveRecent(m.profile, m.recentList)
 
+	var reload tea.Cmd
 	if m.subtreeOn {
-		return m.startSubtreeFanout()
+		reload = m.startSubtreeFanout()
+	} else {
+		m.loading = true
+		reload = m.load()
 	}
-	m.loading = true
-	return m.load()
+	// m.vcnNames was just invalidated above — if the Subnet view's VCN
+	// grouping ("g") is active, its header rows would otherwise fall back
+	// to raw VCN OCIDs (vcnLabel's fallback) until something else happens
+	// to re-trigger fetchVcnNames, which nothing here does on its own.
+	if m.groupingActive() {
+		return tea.Batch(reload, m.fetchVcnNames())
+	}
+	return reload
 }

@@ -8,6 +8,15 @@ import (
 	"toci/internal/registry"
 )
 
+func TestBigScrollRows(t *testing.T) {
+	cases := map[int]int{20: 10, 21: 10, 1: 1, 0: 1, -5: 1}
+	for visible, want := range cases {
+		if got := bigScrollRows(visible); got != want {
+			t.Errorf("bigScrollRows(%d) = %d, want %d", visible, got, want)
+		}
+	}
+}
+
 func TestFitColumnsGrowsProportionallyToFillSlack(t *testing.T) {
 	cols := []registry.Column{
 		{Header: "NAME", Width: 30},

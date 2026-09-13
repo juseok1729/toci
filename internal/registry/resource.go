@@ -153,3 +153,11 @@ func stateLabel[T ~string](s T) string {
 func StateLabel[T ~string](s T) string {
 	return stateLabel(s)
 }
+
+// CidrRange is cidrRange exported for the app package (the VCN-group
+// header synthesized by grouping Subnets by VCN — see vcn_tree.go — shows
+// its VCN's own IP range there, outside any Column Get closure defined in
+// this package).
+func CidrRange(cidr string) string {
+	return cidrRange(cidr)
+}

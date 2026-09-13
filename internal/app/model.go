@@ -15,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	oci_bastion "github.com/oracle/oci-go-sdk/v65/bastion"
+	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/sahilm/fuzzy"
 	"gopkg.in/yaml.v3"
 
@@ -75,10 +76,11 @@ type rowsMsg struct {
 
 type rootNameMsg struct{ name string }
 
-// vcnNamesMsg carries the VcnID->DisplayName lookup fetchVcnNames builds,
-// for labeling the "g" grouping column on the Subnet view.
+// vcnNamesMsg carries the VcnID->vcnInfo lookup fetchVcnNames builds, for
+// labeling the "g" grouping header on the Subnet view (name, CIDR, IP
+// range).
 type vcnNamesMsg struct {
-	names map[string]string
+	names map[string]vcnInfo
 	err   error
 }
 
@@ -313,10 +315,11 @@ type Model struct {
 	// meaningful on the Subnet view with no VCN filter active (see
 	// groupingActive); a VCN-filtered Subnet list is already one VCN.
 	groupByVcn bool
-	// vcnNames caches VcnID->DisplayName for the current compartment,
-	// fetched lazily by fetchVcnNames the first time groupByVcn turns on.
-	// Invalidated (set nil) on every compartment change.
-	vcnNames map[string]string
+	// vcnNames caches VcnID->vcnInfo (name, CIDR) for the current
+	// compartment, fetched lazily by fetchVcnNames the first time
+	// groupByVcn turns on. Invalidated (set nil) on every compartment
+	// change.
+	vcnNames map[string]vcnInfo
 
 	// exascaleNodeTree toggles ("g" key) expanding each Exadata VM cluster
 	// (Exascale) row into a tree with its DB nodes as children — the node
@@ -1015,7 +1018,7 @@ func (m *Model) displayColumns() []registry.Column {
 }
 
 // fetchVcnNames lists every VCN in the current compartment and returns a
-// VcnID->DisplayName map, for vcnLabel to use once loaded.
+// VcnID->vcnInfo map, for vcnLabel/groupRowsByVcn to use once loaded.
 func (m Model) fetchVcnNames() tea.Cmd {
 	factory := m.factory
 	scope := m.scope
@@ -1025,11 +1028,15 @@ func (m Model) fetchVcnNames() tea.Cmd {
 		if err != nil {
 			return vcnNamesMsg{err: err}
 		}
-		names := make(map[string]string, len(rows))
+		infos := make(map[string]vcnInfo, len(rows))
 		for _, row := range rows {
-			names[row.ID] = row.Name
+			cidr := ""
+			if v, ok := row.Raw.(core.Vcn); ok {
+				cidr = deref(v.CidrBlock)
+			}
+			infos[row.ID] = vcnInfo{Name: row.Name, Cidr: cidr}
 		}
-		return vcnNamesMsg{names: names}
+		return vcnNamesMsg{names: infos}
 	}
 }
 
@@ -1106,13 +1113,25 @@ func (m *Model) selectDrgFilter(id, name string) {
 }
 
 // openResourceSearch opens the "f"/":" centered fuzzy picker over every
-// resource kind.
+// resource kind, grouped into categories (resourcePickerItems) the same
+// way OCI's own console groups its left nav.
 func (m *Model) openResourceSearch() {
-	items := make([]pickerItem, len(m.resources))
-	for i, res := range m.resources {
-		items[i] = pickerItem{key: res.Key(), label: res.Label()}
+	resources := m.resources
+	currentKey := m.current().Key()
+	p := newPicker(pickerResource, "Resources", nil)
+	p.treeFilter = func(query string) []pickerItem {
+		return resourcePickerItems(resources, currentKey, query)
 	}
-	m.picker = newPicker(pickerResource, "Resources", items)
+	p.refilter()
+	// Land on the current resource rather than item 0 — with categories
+	// in the way, item 0 is now a header with nothing to select.
+	for i, it := range p.filtered {
+		if it.key == currentKey {
+			p.cursor = i
+			break
+		}
+	}
+	m.picker = p
 	m.mode = modePicker
 }
 
@@ -1600,10 +1619,17 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // click on an item (see updatePickerMouse).
 func (m Model) confirmPicker() (tea.Model, tea.Cmd) {
 	item, ok := m.picker.selected()
-	m.mode = modeTable
 	if !ok {
+		m.mode = modeTable
 		return m, nil
 	}
+	if m.picker.kind == pickerResource && item.key == "" {
+		// A category header row (see resourcePickerItems) — nothing to
+		// switch to, so leave the picker open rather than closing it on a
+		// no-op selection.
+		return m, nil
+	}
+	m.mode = modeTable
 	switch m.picker.kind {
 	case pickerRegion:
 		m.scope.Region = item.key
@@ -1875,6 +1901,19 @@ func rowClipboardID(row registry.Row) (id string, ok bool) {
 	return row.ID, true
 }
 
+// bigScrollRows is how many rows "shift+up"/"shift+down" jump per press —
+// a LazyVim-style half-page scroll (like ctrl-d/ctrl-u) so paging through a
+// long resource list doesn't mean holding down the arrow key. visibleRows
+// is the table's own viewport height (m.table.Height()); at least 1 so a
+// very short table still moves.
+func bigScrollRows(visibleRows int) int {
+	n := visibleRows / 2
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	wasHelpOpen := m.showHelp
@@ -1891,6 +1930,14 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
+	case "shift+up":
+		m.table.MoveUp(bigScrollRows(m.table.Height()))
+		return m, nil
+
+	case "shift+down":
+		m.table.MoveDown(bigScrollRows(m.table.Height()))
+		return m, nil
+
 	case "space":
 		// wasHelpOpen, not m.showHelp — the block above already closed it
 		// unconditionally, so re-checking m.showHelp here would always see
@@ -2434,11 +2481,24 @@ func (m Model) renderResourceSearch() string {
 	b.WriteString(strings.Repeat("─", width-4))
 	b.WriteString("\n")
 	for i, it := range m.picker.filtered {
-		line := it.label
-		if i == m.picker.cursor {
-			line = selStyle.Render("› " + line)
-		} else {
-			line = "  " + line
+		// A category header (resourcePickerItems) has no key — nothing to
+		// select, so it's dimmed via titleStyle instead of plain text, but
+		// only when it isn't the highlighted row (selStyle's own styling
+		// wins there, same as any other row — see embedTwoInLine's doc for
+		// why nesting two Render calls' ANSI spans is worth avoiding).
+		isCategory := it.key == ""
+		text := it.glyph + it.label
+		if !isCategory && it.isCurrent {
+			text += " ●"
+		}
+		var line string
+		switch {
+		case i == m.picker.cursor:
+			line = selStyle.Render("› " + text)
+		case isCategory:
+			line = "  " + titleStyle.Render(text)
+		default:
+			line = "  " + text
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -2458,7 +2518,7 @@ func (m Model) renderResourceSearch() string {
 	topWidth := ansi.StringWidth(lines[0])
 	titleX := (topWidth - ansi.StringWidth(title)) / 2
 
-	count := statusStyle.Render(fmt.Sprintf(" %d/%d ", len(m.picker.filtered), len(m.picker.items)))
+	count := statusStyle.Render(fmt.Sprintf(" %d/%d ", pickerLeafCount(m.picker.filtered), len(m.resources)))
 	countX := topWidth - ansi.StringWidth(count) - 1
 	if countX > titleX+ansi.StringWidth(title) {
 		lines[0] = embedTwoInLine(lines[0], title, titleX, count, countX)
@@ -2537,6 +2597,7 @@ func (m Model) helpEntries() []helpEntry {
 	add := func(key, desc string) { entries = append(entries, helpEntry{key, desc}) }
 
 	add("j/k, ↑↓", "move")
+	add("shift+↑/↓", "scroll half page")
 	add("d", "detail")
 	add("y", "copy OCID")
 	add("f / :", "search resources")
