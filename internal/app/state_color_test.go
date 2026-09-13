@@ -6,10 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/table"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"toci/internal/registry"
 )
@@ -26,11 +25,6 @@ func TestColumnRangeFindsNamedColumn(t *testing.T) {
 }
 
 func TestBlinkRecentRowsOnlyPaintsMatchingRowsWhenOn(t *testing.T) {
-	// Force real ANSI output — lipgloss auto-disables color with no TTY
-	// attached, which a `go test` run never has.
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(termenv.Ascii)
-
 	cols := []table.Column{{Title: "NAME", Width: 6}, {Title: "STATE", Width: 7}}
 	view := "HEADER\n" +
 		"web11   RUNNING\n" +
@@ -89,9 +83,6 @@ func TestStateStyleForPicksCorrectTier(t *testing.T) {
 }
 
 func TestColorizeStateColorsTextNotBackground(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(termenv.Ascii)
-
 	cols := []table.Column{{Title: "NAME", Width: 6}, {Title: "STATE", Width: 9}, {Title: "TAIL", Width: 4}}
 	plain := "web11   Running   xyz "
 
@@ -132,9 +123,6 @@ func TestColorizeStateColorsTextNotBackground(t *testing.T) {
 }
 
 func TestColorizeStateColorsMixedNodeCellPerPart(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(termenv.Ascii)
-
 	goodOpenCode, _, _ := strings.Cut(stateTextGood.Render("\x01"), "\x01")
 	badOpenCode, _, _ := strings.Cut(stateTextBad.Render("\x01"), "\x01")
 	selOpenCode, _, _ := strings.Cut(selStyle.Render("\x01"), "\x01")

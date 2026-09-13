@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	oci_bastion "github.com/oracle/oci-go-sdk/v65/bastion"
 	"github.com/sahilm/fuzzy"
@@ -317,7 +317,7 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 		scope:           scope,
 		compPath:        []crumb{{ID: scope.CompartmentID, Name: "root"}},
 		table:           newTable(20),
-		detail:          viewport.New(80, 20),
+		detail:          viewport.New(viewport.WithWidth(80), viewport.WithHeight(20)),
 		filterInput:     fi,
 		confirmInput:    ci,
 		promptInput:     pi,
@@ -803,7 +803,7 @@ func (m *Model) relayout() {
 		tableWidth = mainAbsFloor
 	}
 	m.table.SetWidth(tableWidth)
-	m.detail.Width = mainWidth
+	m.detail.SetWidth(mainWidth)
 	m.relayoutTableColumns()
 }
 
@@ -1128,7 +1128,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// blank line, plus whatever else each pane reserves below that.
 		m.tableHeight = msg.Height - 9
 		m.table.SetHeight(m.tableHeight)
-		m.detail.Height = msg.Height - 7
+		m.detail.SetHeight(msg.Height - 7)
 		m.relayout()
 		if m.embTerm != nil {
 			cols, rows := m.embTermSize()
@@ -1344,7 +1344,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeTable
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch m.mode {
 		case modeSplash:
 			if msg.String() == "q" || msg.String() == "ctrl+c" {
@@ -1367,6 +1367,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTable(msg)
 		}
 
+	case tea.MouseMsg:
+		switch m.mode {
+		case modeTable:
+			return m.updateMouse(msg)
+		case modePicker:
+			return m.updatePickerMouse(msg)
+		}
+		return m, nil
+
 	}
 
 	var cmd tea.Cmd
@@ -1379,8 +1388,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // (killing the child process) and returning to the table. There's no
 // detach/reattach: unlike tmux, a normal remote `exit` (embTermExitMsg)
 // is the expected way back.
-func (m Model) updateEmbeddedTerm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlBackslash {
+func (m Model) updateEmbeddedTerm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+\\" {
 		if m.embTerm != nil {
 			// Leave m.embTerm set (just marked killed) rather than nil —
 			// the embTermExitMsg that follows shortly after needs to see
@@ -1395,11 +1404,11 @@ func (m Model) updateEmbeddedTerm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// shift+up/down scrolls the scrollback locally instead of reaching the
 	// remote shell — reserved the same way ctrl+\ is.
 	if m.embTerm != nil {
-		switch msg.Type {
-		case tea.KeyShiftUp:
+		switch msg.String() {
+		case "shift+up":
 			m.embTerm.scrollUp(3)
 			return m, nil
-		case tea.KeyShiftDown:
+		case "shift+down":
 			m.embTerm.scrollDown(3)
 			return m, nil
 		}
@@ -1413,7 +1422,7 @@ func (m Model) updateEmbeddedTerm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.mode = modeTable
@@ -1437,7 +1446,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -1445,63 +1454,7 @@ func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeTable
 		return m, nil
 	case "enter":
-		item, ok := m.picker.selected()
-		m.mode = modeTable
-		if !ok {
-			return m, nil
-		}
-		switch m.picker.kind {
-		case pickerRegion:
-			m.scope.Region = item.key
-			m.rows = nil
-			m.filterQuery = ""
-			m.setDisplayRows()
-			m.loading = true
-			m.err = nil
-			return m, m.load()
-		case pickerAction:
-			a, ok := m.actionable()
-			if !ok {
-				return m, nil
-			}
-			for _, spec := range a.Actions() {
-				if spec.Key == item.key {
-					m.pendingAction = spec
-					m.confirmInput.SetValue("")
-					m.confirmInput.Focus()
-					m.mode = modeConfirm
-					break
-				}
-			}
-		case pickerBastion:
-			m.sshBastionID = item.key
-			m.promptInput.SetValue("opc")
-			m.promptInput.CursorEnd()
-			m.promptInput.Focus()
-			m.mode = modePrompt
-		case pickerSSHMode:
-			m.sshDirect = item.key == "direct"
-			return m.resolveSSHKey()
-		case pickerSSHKey:
-			for _, k := range m.sshKeyPairs {
-				if k.privateKeyPath == item.key {
-					m.sshKey = k
-					break
-				}
-			}
-			return m, m.continueSSHSetup()
-		case pickerResource:
-			for i, res := range m.resources {
-				if res.Key() != item.key {
-					continue
-				}
-				if res.Key() == "compartment" {
-					return m, m.switchToRootCompartments()
-				}
-				return m, m.switchResource(i)
-			}
-		}
-		return m, nil
+		return m.confirmPicker()
 	case "up", "ctrl+k":
 		if m.picker.cursor > 0 {
 			m.picker.cursor--
@@ -1519,7 +1472,132 @@ func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// confirmPicker acts on the picker's currently-highlighted item — the
+// shared "commit this choice" step behind both the enter key and a mouse
+// click on an item (see updatePickerMouse).
+func (m Model) confirmPicker() (tea.Model, tea.Cmd) {
+	item, ok := m.picker.selected()
+	m.mode = modeTable
+	if !ok {
+		return m, nil
+	}
+	switch m.picker.kind {
+	case pickerRegion:
+		m.scope.Region = item.key
+		m.rows = nil
+		m.filterQuery = ""
+		m.setDisplayRows()
+		m.loading = true
+		m.err = nil
+		return m, m.load()
+	case pickerAction:
+		a, ok := m.actionable()
+		if !ok {
+			return m, nil
+		}
+		for _, spec := range a.Actions() {
+			if spec.Key == item.key {
+				m.pendingAction = spec
+				m.confirmInput.SetValue("")
+				m.confirmInput.Focus()
+				m.mode = modeConfirm
+				break
+			}
+		}
+	case pickerBastion:
+		m.sshBastionID = item.key
+		m.promptInput.SetValue("opc")
+		m.promptInput.CursorEnd()
+		m.promptInput.Focus()
+		m.mode = modePrompt
+	case pickerSSHMode:
+		m.sshDirect = item.key == "direct"
+		return m.resolveSSHKey()
+	case pickerSSHKey:
+		for _, k := range m.sshKeyPairs {
+			if k.privateKeyPath == item.key {
+				m.sshKey = k
+				break
+			}
+		}
+		return m, m.continueSSHSetup()
+	case pickerResource:
+		for i, res := range m.resources {
+			if res.Key() != item.key {
+				continue
+			}
+			if res.Key() == "compartment" {
+				return m, m.switchToRootCompartments()
+			}
+			return m, m.switchResource(i)
+		}
+	}
+	return m, nil
+}
+
+// pickerRegularItemsTop/pickerResourceItemsTop are how many lines into the
+// picker box (below its own top border) the first filtered item is drawn —
+// see renderPicker (title, input, blank, then items) and
+// renderResourceSearch (input, divider, then items).
+const (
+	pickerRegularItemsTop  = 3
+	pickerResourceItemsTop = 2
+)
+
+// pickerItemAt maps a mouse click to a filtered-picker item index. box is
+// the exact string the picker was rendered as (so the click can be bounded
+// to its actual on-screen width/height); boxX/boxY is that box's top-left
+// screen position; itemsTop is one of the constants above.
+func pickerItemAt(clickX, clickY, boxX, boxY, itemsTop int, box string) (int, bool) {
+	boxWidth, boxLines := overlayBoxDims(box)
+	x, y := clickX-boxX, clickY-boxY
+	if x < 0 || x >= boxWidth || y < 0 || y >= len(boxLines) {
+		return 0, false
+	}
+	i := y - 1 - itemsTop // -1 for the box's own top border line
+	if i < 0 {
+		return 0, false
+	}
+	return i, true
+}
+
+// updatePickerMouse handles a left-click on a picker overlay (region/action/
+// bastion/ssh/resource-search — see picker.go): it maps the click to a
+// filtered item exactly the way each is actually drawn in View(), then
+// commits it the same way pressing enter would.
+func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	click, ok := msg.(tea.MouseClickMsg)
+	if !ok || click.Button != tea.MouseLeft {
+		return m, nil
+	}
+
+	var box string
+	var boxX, boxY, itemsTop int
+	if m.picker.kind == pickerResource {
+		// Overlaid centered over the table — see View()'s overlayCenter call.
+		box = m.renderResourceSearch()
+		boxWidth, boxLines := overlayBoxDims(box)
+		boxX = (m.width - boxWidth) / 2
+		boxY = (m.height - len(boxLines)) / 3
+		itemsTop = pickerResourceItemsTop
+	} else {
+		// Drawn inline as the main panel, itself preceded by the header
+		// block's 4 lines + 1 blank line and the "  " left margin — see
+		// View()'s modePicker branch and mouseBodyTop's own comment.
+		box = m.renderPicker()
+		boxX, boxY = 2, 5
+		itemsTop = pickerRegularItemsTop
+	}
+
+	i, ok := pickerItemAt(click.X, click.Y, boxX, boxY, itemsTop, box)
+	if !ok || i >= len(m.picker.filtered) {
+		return m, nil
+	}
+	m.picker.cursor = i
+	return m.confirmPicker()
+}
+
+func (m Model) updateFilter(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -1540,7 +1618,7 @@ func (m Model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -1561,7 +1639,7 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updatePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -1596,7 +1674,80 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// mouseBodyTop is the screen row where the table's first data row starts
+// in modeTable's default render path: 4 header lines (Profile/Region/
+// Resource/Compartment) + 1 blank line (see WindowSizeMsg's "-9" comment)
+// + the table box's own top border + its column-header row.
+const mouseBodyTop = 5 + 2
+
+// updateMouse handles wheel scroll and left-click row selection over the
+// resource table. bubbles' table.Model (v1.0.0) has no mouse support and
+// keeps its scroll offset private, so a click is mapped to a row by
+// diffing against the one line we can always find on screen — the
+// cursor's own highlighted row, via selectedLinePrefix (already used by
+// whitenDataRows/colorizeState) — instead of reimplementing its internal
+// viewport math.
+func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.table.MoveUp(1)
+		case tea.MouseWheelDown:
+			m.table.MoveDown(1)
+		}
+
+	case tea.MouseClickMsg:
+		if msg.Button != tea.MouseLeft || m.loading || m.err != nil || selectedLinePrefix == "" {
+			return m, nil
+		}
+		lines := strings.Split(m.View().Content, "\n")
+		selY := -1
+		for i, line := range lines {
+			if strings.Contains(line, selectedLinePrefix) {
+				selY = i
+				break
+			}
+		}
+		if selY == -1 {
+			return m, nil
+		}
+		if row, ok := mouseClickRow(msg.Y, selY, m.table.Cursor(), m.table.Height()); ok {
+			m.table.SetCursor(row)
+		}
+	}
+	return m, nil
+}
+
+// mouseClickRow maps a clicked screen row (clickY) to an absolute table
+// row index, given the screen row the cursor is currently highlighted on
+// (cursorY) and its absolute row index (cursorRow). Both are lines in the
+// same contiguous, one-line-per-row table body, so the row delta equals
+// the screen-line delta — no need to know the table's scroll offset. ok is
+// false when the click falls outside the table body.
+func mouseClickRow(clickY, cursorY, cursorRow, bodyHeight int) (row int, ok bool) {
+	bodyIdx := clickY - mouseBodyTop
+	if bodyIdx < 0 || bodyIdx >= bodyHeight {
+		return 0, false
+	}
+	return cursorRow + (clickY - cursorY), true
+}
+
+// rowClipboardID returns the OCID "y" should copy for row, or ok=false for
+// a row with nothing sensible to copy. row.ID is a synthetic
+// "clusterID:nodeID" table key for an Exascale DB node child row (see
+// exascale_tree.go), not a real OCID — copy the node's actual Id instead.
+func rowClipboardID(row registry.Row) (id string, ok bool) {
+	switch raw := row.Raw.(type) {
+	case vcnGroupHeader:
+		return "", false
+	case exascaleNodeRow:
+		return deref(raw.node.Id), true
+	}
+	return row.ID, true
+}
+
+func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	wasHelpOpen := m.showHelp
 
@@ -1612,7 +1763,7 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case " ":
+	case "space":
 		// wasHelpOpen, not m.showHelp — the block above already closed it
 		// unconditionally, so re-checking m.showHelp here would always see
 		// false and reopen it every time, making space a no-op toggle.
@@ -1818,6 +1969,18 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.detailExport = nil
 		return m, nil
 
+	case "y":
+		row, ok := m.selected()
+		if !ok {
+			return m, nil
+		}
+		id, ok := rowClipboardID(row)
+		if !ok {
+			return m, nil
+		}
+		m.statusMsg = "copied " + id
+		return m, tea.SetClipboard(id)
+
 	case "enter":
 		row, ok := m.selected()
 		if !ok {
@@ -1856,7 +2019,40 @@ func (m Model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) View() string {
+// embTermContentRow/Col is the screen position of the embedded terminal's
+// own row/col (0,0) — the header block (5 lines) plus the terminal box's
+// top border, and the outer "  " margin plus the box's border+padding.
+// Same derivation as mouseBodyTop for the resource table; verified against
+// a rendered frame rather than just counted by hand.
+const (
+	embTermContentRow = 6
+	embTermContentCol = 4
+)
+
+// View builds the current screen and declares the terminal features this
+// app needs (alt screen, cell-motion mouse tracking) — v1 set those via
+// tea.NewProgram options; v2 moved them here as declarative View fields.
+// It also places the real terminal cursor over the embedded SSH session's
+// own cursor: v2's Cursor field is nil (hidden) unless set explicitly, so
+// without this the ssh session looks like it has no cursor at all.
+func (m Model) View() tea.View {
+	v := tea.NewView(m.viewContent())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	if m.mode == modeEmbeddedTerm && m.embTerm != nil && m.embTerm.scrollback == 0 {
+		// ponytail: always a blinking block cursor — doesn't track the
+		// remote app's own hide-cursor/shape requests (vt.Callbacks'
+		// CursorVisibility/CursorStyle, unwired). Upgrade path: register
+		// those callbacks in startEmbeddedTerm and store the result on
+		// embeddedTerm if a full-screen remote app (vim, less) hiding its
+		// cursor turns out to matter in practice.
+		pos := m.embTerm.emu.CursorPosition()
+		v.Cursor = tea.NewCursor(pos.X+embTermContentCol, pos.Y+embTermContentRow)
+	}
+	return v
+}
+
+func (m Model) viewContent() string {
 	if m.mode == modeSplash {
 		return renderSplash(m)
 	}
@@ -2056,7 +2252,13 @@ func (m Model) renderResourceSearch() string {
 	b.WriteString("> ")
 	b.WriteString(m.picker.input.View())
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", width-2))
+	// width-4, not width-2: width is the box's outer width, and the
+	// divider sits inside both the border (1 col each side) and the
+	// style's own padding (1 col each side) — see tableBoxOverhead for
+	// the same accounting elsewhere. Off by those 2 extra columns, this
+	// line was wide enough to make lipgloss soft-wrap it onto a second
+	// row instead of just filling the divider's own row.
+	b.WriteString(strings.Repeat("─", width-4))
 	b.WriteString("\n")
 	for i, it := range m.picker.filtered {
 		line := it.label
@@ -2082,12 +2284,13 @@ func (m Model) renderResourceSearch() string {
 	title := titleStyle.Render(" " + m.picker.title + " ")
 	topWidth := ansi.StringWidth(lines[0])
 	titleX := (topWidth - ansi.StringWidth(title)) / 2
-	lines[0] = embedInLine(lines[0], title, titleX)
 
 	count := statusStyle.Render(fmt.Sprintf(" %d/%d ", len(m.picker.filtered), len(m.picker.items)))
 	countX := topWidth - ansi.StringWidth(count) - 1
 	if countX > titleX+ansi.StringWidth(title) {
-		lines[0] = embedInLine(lines[0], count, countX)
+		lines[0] = embedTwoInLine(lines[0], title, titleX, count, countX)
+	} else {
+		lines[0] = embedInLine(lines[0], title, titleX)
 	}
 
 	return strings.Join(lines, "\n")
@@ -2152,6 +2355,7 @@ func (m Model) helpEntries() []helpEntry {
 		add("enter", "descend")
 	}
 	add("d", "detail")
+	add("y", "copy OCID")
 	add("f / :", "search resources")
 	add("/", "filter")
 	add("r", "region")

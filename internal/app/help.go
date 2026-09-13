@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -58,7 +58,7 @@ func renderHelpBox(m Model) string {
 func overlayBottomRight(base, box string, termWidth int) string {
 	boxWidth, boxLines := overlayBoxDims(box)
 	baseLines := strings.Split(base, "\n")
-	return spliceOverlay(baseLines, boxLines, termWidth-boxWidth, len(baseLines)-len(boxLines))
+	return spliceOverlay(baseLines, boxLines, termWidth-boxWidth, len(baseLines)-len(boxLines), termWidth)
 }
 
 // overlayRightAt splices box right-aligned to termWidth, starting at a
@@ -68,7 +68,7 @@ func overlayBottomRight(base, box string, termWidth int) string {
 func overlayRightAt(base, box string, termWidth, row int) string {
 	boxWidth, boxLines := overlayBoxDims(box)
 	baseLines := strings.Split(base, "\n")
-	return spliceOverlay(baseLines, boxLines, termWidth-boxWidth, row)
+	return spliceOverlay(baseLines, boxLines, termWidth-boxWidth, row, termWidth)
 }
 
 // overlayTopRight splices box onto the top-right corner (row 0). Used for
@@ -88,7 +88,7 @@ func overlayCenter(base, box string, termWidth, termHeight int) string {
 	baseLines := strings.Split(base, "\n")
 	x := (termWidth - boxWidth) / 2
 	y := (termHeight - len(boxLines)) / 3
-	return spliceOverlay(baseLines, boxLines, x, y)
+	return spliceOverlay(baseLines, boxLines, x, y, termWidth)
 }
 
 func overlayBoxDims(box string) (width int, lines []string) {
@@ -112,7 +112,26 @@ func embedInLine(line, label string, x int) string {
 	return left + label + right
 }
 
-func spliceOverlay(baseLines, boxLines []string, x, y int) string {
+// embedTwoInLine punches two non-overlapping labels (a before b) into an
+// already-rendered line in a single pass — used by renderResourceSearch for
+// its title and match-count, which share one border line. Two sequential
+// embedInLine calls would work out to the same visible text, but each cut
+// re-opens the line's border-color styling at its own boundary, so calling
+// it twice leaves a pair of zero-width "open immediately followed by
+// reset" style segments sitting right where the count was spliced in —
+// harmless in principle, but exactly the kind of degenerate ANSI a real
+// terminal's redraw path has no reason to have been exercised against,
+// which is what was blanking the dashes around the match count. One cut
+// per boundary avoids ever re-slicing already-spliced output.
+func embedTwoInLine(line, a string, ax int, b string, bx int) string {
+	aw := ansi.StringWidth(a)
+	left := ansi.Cut(line, 0, ax)
+	mid := ansi.Cut(line, ax+aw, bx)
+	right := ansi.Cut(line, bx+ansi.StringWidth(b), 1<<20)
+	return left + a + mid + b + right
+}
+
+func spliceOverlay(baseLines, boxLines []string, x, y, termWidth int) string {
 	if x < 0 {
 		x = 0
 	}
@@ -147,7 +166,19 @@ func spliceOverlay(baseLines, boxLines []string, x, y int) string {
 		// real content to its right, like a table box's own border, on
 		// every row it overlaps.
 		right := ansi.Cut(baseLines[row], x+ansi.StringWidth(boxLine), 1<<20)
-		baseLines[row] = left + boxLine + right
+		spliced := left + boxLine + right
+		// Belt-and-suspenders: never hand the terminal a row wider than the
+		// screen. left/boxLine/right's widths are each measured and cut
+		// independently, so any width miscount between them (a mismatched
+		// wcwidth table between what built boxLine and what measures it
+		// here, say) would otherwise overshoot the terminal's real column
+		// count and trigger a hard line-wrap on some terminals — clip back
+		// to termWidth rather than trust the arithmetic to always land
+		// exactly on it.
+		if w := ansi.StringWidth(spliced); w > termWidth {
+			spliced = ansi.Cut(spliced, 0, termWidth)
+		}
+		baseLines[row] = spliced
 	}
 	return strings.Join(baseLines, "\n")
 }

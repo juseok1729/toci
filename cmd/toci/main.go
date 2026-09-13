@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/spf13/cobra"
 
@@ -51,7 +51,7 @@ func main() {
 			scope := registry.Scope{Region: region, CompartmentID: tenancyID}
 			m := app.New(factory, scope, write, profile, version)
 
-			_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
+			_, err = tea.NewProgram(m).Run()
 			return err
 		},
 	}

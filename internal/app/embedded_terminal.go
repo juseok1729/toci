@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	vt "github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 )
@@ -228,56 +228,66 @@ type embTermExitMsg struct{ err error }
 // -X) that flips the terminal into application-cursor-key mode won't get
 // the alternate escapes it asked for. Upgrade path: track mode changes via
 // the vt.Emulator's callback hooks and switch encodings accordingly.
-func keyMsgToBytes(msg tea.KeyMsg) []byte {
-	if msg.Alt {
+func keyMsgToBytes(msg tea.KeyPressMsg) []byte {
+	if msg.Mod.Contains(tea.ModAlt) {
 		return append([]byte{0x1b}, keyMsgToBytesNoAlt(msg)...)
 	}
 	return keyMsgToBytesNoAlt(msg)
 }
 
-func keyMsgToBytesNoAlt(msg tea.KeyMsg) []byte {
-	if msg.Type == tea.KeyRunes {
-		return []byte(string(msg.Runes))
+func keyMsgToBytesNoAlt(msg tea.KeyPressMsg) []byte {
+	if len(msg.Text) > 0 {
+		return []byte(msg.Text)
 	}
-	if seq, ok := namedKeySequences[msg.Type]; ok {
+	// shift+tab shares KeyTab's Code with plain tab — Mod is the only thing
+	// that tells them apart, so it has to be checked before the Code-only
+	// lookups below.
+	if msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift) {
+		return []byte("\x1b[Z")
+	}
+	if seq, ok := namedKeySequences[msg.Code]; ok {
 		return []byte(seq)
 	}
-	// Control keys (ctrl+a..z and friends) and the plain C0 controls
-	// (enter, tab, backspace, esc) share bubbletea's KeyType range
-	// 0-31/127, which is set to the literal control byte — see bubbletea's
-	// key.go const block.
-	if msg.Type >= 0 && msg.Type <= 31 || msg.Type == 127 {
-		return []byte{byte(msg.Type)}
+	// The plain C0 controls (enter, tab, backspace, esc) carry their
+	// literal control byte as Code already — see bubbletea's key.go
+	// (KeyEnter = '\r', KeyTab = '\t', etc).
+	if msg.Code >= 0 && msg.Code <= 31 || msg.Code == 127 {
+		return []byte{byte(msg.Code)}
+	}
+	// Unlike v1, ctrl+letter combos carry the *base* letter as Code (e.g.
+	// 'c') with Mod holding ModCtrl separately, rather than the control
+	// byte itself — mask it down the same way a real terminal would.
+	if msg.Mod.Contains(tea.ModCtrl) && msg.Code > 0 && msg.Code < 128 {
+		return []byte{byte(msg.Code) & 0x1f}
 	}
 	return nil
 }
 
-// namedKeySequences covers the keys bubbletea decodes to a negative
-// KeyType (i.e. not a literal control byte) that a remote terminal
-// application still expects to see as a normal-mode ANSI escape sequence.
-var namedKeySequences = map[tea.KeyType]string{
-	tea.KeyUp:       "\x1b[A",
-	tea.KeyDown:     "\x1b[B",
-	tea.KeyRight:    "\x1b[C",
-	tea.KeyLeft:     "\x1b[D",
-	tea.KeyHome:     "\x1b[H",
-	tea.KeyEnd:      "\x1b[F",
-	tea.KeyPgUp:     "\x1b[5~",
-	tea.KeyPgDown:   "\x1b[6~",
-	tea.KeyDelete:   "\x1b[3~",
-	tea.KeyInsert:   "\x1b[2~",
-	tea.KeySpace:    " ",
-	tea.KeyShiftTab: "\x1b[Z",
-	tea.KeyF1:       "\x1bOP",
-	tea.KeyF2:       "\x1bOQ",
-	tea.KeyF3:       "\x1bOR",
-	tea.KeyF4:       "\x1bOS",
-	tea.KeyF5:       "\x1b[15~",
-	tea.KeyF6:       "\x1b[17~",
-	tea.KeyF7:       "\x1b[18~",
-	tea.KeyF8:       "\x1b[19~",
-	tea.KeyF9:       "\x1b[20~",
-	tea.KeyF10:      "\x1b[21~",
-	tea.KeyF11:      "\x1b[23~",
-	tea.KeyF12:      "\x1b[24~",
+// namedKeySequences covers the keys bubbletea decodes to a Code above the
+// literal control-byte range that a remote terminal application still
+// expects to see as a normal-mode ANSI escape sequence.
+var namedKeySequences = map[rune]string{
+	tea.KeyUp:     "\x1b[A",
+	tea.KeyDown:   "\x1b[B",
+	tea.KeyRight:  "\x1b[C",
+	tea.KeyLeft:   "\x1b[D",
+	tea.KeyHome:   "\x1b[H",
+	tea.KeyEnd:    "\x1b[F",
+	tea.KeyPgUp:   "\x1b[5~",
+	tea.KeyPgDown: "\x1b[6~",
+	tea.KeyDelete: "\x1b[3~",
+	tea.KeyInsert: "\x1b[2~",
+	tea.KeySpace:  " ",
+	tea.KeyF1:     "\x1bOP",
+	tea.KeyF2:     "\x1bOQ",
+	tea.KeyF3:     "\x1bOR",
+	tea.KeyF4:     "\x1bOS",
+	tea.KeyF5:     "\x1b[15~",
+	tea.KeyF6:     "\x1b[17~",
+	tea.KeyF7:     "\x1b[18~",
+	tea.KeyF8:     "\x1b[19~",
+	tea.KeyF9:     "\x1b[20~",
+	tea.KeyF10:    "\x1b[21~",
+	tea.KeyF11:    "\x1b[23~",
+	tea.KeyF12:    "\x1b[24~",
 }
