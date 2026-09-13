@@ -1752,6 +1752,15 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.picker.cursor = i
+	if m.picker.kind == pickerResource {
+		// The resource-search tree has category headers sitting between
+		// real resources — a click there is easy to land near by accident,
+		// and confirming immediately closed the whole picker on those. Just
+		// move the cursor; Enter (or a second click landing on the same
+		// row, since re-clicking the highlighted row is now indistinguishable
+		// from clicking to select it) commits, same as keyboard nav.
+		return m, nil
+	}
 	return m.confirmPicker()
 }
 
