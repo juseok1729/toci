@@ -44,3 +44,17 @@ func TestRenderResourceSearch(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenResourceSearchCursorStartsOnFirstResource: the cursor always
+// starts on the first selectable resource (top of the list), not whichever
+// resource is currently loaded — resIdx 0 defaults to Compartments, which
+// resourceCategories now files last (Governance), so tracking "current"
+// used to land the cursor at the bottom of the list on first open.
+func TestOpenResourceSearchCursorStartsOnFirstResource(t *testing.T) {
+	m := Model{resources: registry.All(nil)}
+	m.openResourceSearch()
+
+	if got, want := m.picker.filtered[m.picker.cursor].key, "instance"; got != want {
+		t.Errorf("cursor lands on resource %q, want %q (the first entry under the first category)", got, want)
+	}
+}

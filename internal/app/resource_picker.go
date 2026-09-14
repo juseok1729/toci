@@ -14,7 +14,6 @@ var resourceCategories = []struct {
 	name string
 	keys []string
 }{
-	{"Governance", []string{"compartment"}},
 	{"Compute", []string{"instance"}},
 	{"Network", []string{
 		"vcn", "subnet", "route-table", "security-list", "nsg",
@@ -22,6 +21,10 @@ var resourceCategories = []struct {
 		"lb",
 	}},
 	{"Database", []string{"db-system", "adb", "exadata", "exascale"}},
+	// Compartment is last, not first — global scope ("c") already lets
+	// users switch compartments anytime, so nudging them to pick one here
+	// before browsing resources just adds friction.
+	{"Governance", []string{"compartment"}},
 }
 
 // resourcePickerItems flattens resources into the tree picker's rows:

@@ -29,8 +29,8 @@ import (
 // Semantic colors (success/error/state badges in state_color.go) are left
 // out on purpose: those signal meaning (red = stopped/error), and
 // retheming them to green would make that signal ambiguous. splash.go has
-// its own copies of the old statusStyle/pathStyle values (splashMutedStyle/
-// splashProfileStyle) so the splash screen's look doesn't move with this.
+// its own copy of the old pathStyle value (splashProfileStyle) so the
+// splash screen's look doesn't move with this.
 const (
 	ociAccent = "#689878" // dominant sage, 29% of the sampled strip
 	ociBorder = "#487858" // mid forest — structural chrome (borders)
@@ -154,6 +154,14 @@ type Model struct {
 	picker      picker
 	filterInput textinput.Model
 
+	// pickerReturnMode is where Esc (or a no-op confirm) sends the current
+	// picker back to. Zero value is modeTable, right for every ordinary
+	// "f"/"c" picker opened from the table; openResourceSearch's home-screen
+	// call site (splash.go) sets it to modeSplash so the floating search
+	// closes back onto the home menu instead of dropping into the (still
+	// resourceless) table underneath it.
+	pickerReturnMode mode
+
 	regionItems []pickerItem
 
 	writeEnabled  bool
@@ -269,17 +277,12 @@ type Model struct {
 	// render time, not something the Update dispatch branches on.
 	showHelp bool
 
-	// splashProgress/splashFrame drive the startup splash screen's fake
-	// progress bar and spinner — "fake" because the only real signal is
-	// fetchRootName's GetCompartment call finishing (there's no initial
-	// resource load to wait on — see Init()'s own doc); a bar that jumps
-	// through a couple of stages (see splashStages/splashStageTicks in
-	// splash.go) reads as alive instead of stalling on an indeterminate
-	// wait. splashProgress is held at the second-to-last stage until
-	// splashDataReady (the real fetch finished), so on a fast connection
-	// the splash still holds for a minimum ~1.2s instead of flashing by in
-	// whatever the API round-trip happened to take.
-	splashProgress  int
+	// splashFrame counts ticks since the home screen appeared, used only to
+	// pace splashPhrase/splashSpinnerFrame below. splashDataReady flips once
+	// fetchRootName's GetCompartment call finishes — the only real loading
+	// signal (there's no initial resource load to wait on, see Init()'s own
+	// doc) — at which point the bottom status line swaps the spinner/phrase
+	// for the version string and the tick loop stops.
 	splashFrame     int
 	splashDataReady bool
 
@@ -338,18 +341,28 @@ type Model struct {
 	exascaleNodeTree bool
 }
 
+// textInputWidth is set on every textinput.Model in this package. Without a
+// Width, bubbles' placeholderView renders only the placeholder's first rune
+// (it sizes an internal buffer to Width()+1); the value itself scrolls
+// within Width regardless, so a generous fixed width never clips longer
+// input, it just avoids that placeholder bug.
+const textInputWidth = 64
+
 func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, profile, version string) Model {
 	fi := textinput.New()
 	fi.Placeholder = "filter..."
 	fi.Prompt = "" // renderer draws its own "/" prefix
+	fi.SetWidth(textInputWidth)
 
 	ci := textinput.New()
 	ci.Placeholder = "type resource name to confirm"
 	ci.Prompt = "" // renderConfirm draws its own "> " prefix
+	ci.SetWidth(textInputWidth)
 
 	pi := textinput.New()
 	pi.Placeholder = "opc"
 	pi.Prompt = "" // renderPrompt draws its own "> " prefix
+	pi.SetWidth(textInputWidth)
 
 	return Model{
 		factory:         factory,
@@ -372,11 +385,12 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 	}
 }
 
-// Init deliberately doesn't load anything into the table (no m.load()) —
-// like k9s/taws, the first screen is an empty table with the resource
-// search open (see splashTickMsg), not whatever resIdx happens to default
-// to. fetchRootName still runs up front since the header's "Compartment:"
-// line needs it regardless of which resource gets picked first.
+// Init deliberately doesn't load anything into the table (no m.load()) — the
+// first screen is the LazyVim-style home menu (modeSplash), which picks a
+// resource (or opens the search) itself once a key is pressed, not whatever
+// resIdx happens to default to. fetchRootName still runs up front since the
+// header's "Compartment:" line needs it regardless of which resource gets
+// picked first.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.fetchRootName(), m.fetchCompartmentTreeCmd(), splashTickCmd(), blinkTickCmd())
 }
@@ -394,12 +408,21 @@ func (m Model) load() tea.Cmd {
 	}
 }
 
+// fetchRootNameTimeout bounds the GetCompartment call fetchRootName makes.
+// It's also the home screen's (modeSplash) "ready" gate now that the screen
+// stays up instead of auto-navigating away — an unreachable/stalled OCI
+// endpoint with no deadline would otherwise leave the loading phrase
+// spinning forever instead of settling on the version string.
+const fetchRootNameTimeout = 8 * time.Second
+
 func (m Model) fetchRootName() tea.Cmd {
 	factory := m.factory
 	region := m.scope.Region
 	tenancyID := m.compPath[0].ID
 	return func() tea.Msg {
-		return rootNameMsg{name: rootCompartmentName(context.Background(), factory, region, tenancyID)}
+		ctx, cancel := context.WithTimeout(context.Background(), fetchRootNameTimeout)
+		defer cancel()
+		return rootNameMsg{name: rootCompartmentName(ctx, factory, region, tenancyID)}
 	}
 }
 
@@ -1164,16 +1187,19 @@ func (m *Model) openResourceSearch() {
 		return resourcePickerItems(resources, currentKey, query)
 	}
 	p.refilter()
-	// Land on the current resource rather than item 0 — with categories
-	// in the way, item 0 is now a header with nothing to select.
+	// Land on the first selectable resource, not item 0 (a category header,
+	// nothing to select there) and not wherever the currently-loaded
+	// resource happens to sit — the cursor always starts at the top of the
+	// list. currentKey is still used above for isCurrent's "●" marker.
 	for i, it := range p.filtered {
-		if it.key == currentKey {
+		if it.key != "" {
 			p.cursor = i
 			break
 		}
 	}
 	m.picker = p
 	m.mode = modePicker
+	m.pickerReturnMode = modeTable
 }
 
 // exitVcn clears the VCN scope and returns to the VCN list.
@@ -1300,26 +1326,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case splashTickMsg:
-		if m.mode != modeSplash {
+		// Home screen (modeSplash) is now a persistent LazyVim-style menu,
+		// not a transient loading gate — once data is ready the bottom line
+		// settles on the version string and the animation simply stops.
+		if m.mode != modeSplash || m.splashDataReady {
 			return m, nil
 		}
 		m.splashFrame++
-		target := splashStages[splashStageIndex(m.splashFrame)]
-		if !m.splashDataReady && target >= 100 {
-			target = splashStages[len(splashStages)-2]
-		}
-		if target > m.splashProgress {
-			m.splashProgress = target
+		m.splashSpinnerFrame++
+		if m.splashFrame%splashPhraseEveryTicks == 0 {
 			m.splashPhrase = splashPhrases[rand.Intn(len(splashPhrases))]
-			m.splashSpinnerFrame++
-		}
-		if m.splashDataReady && m.splashProgress >= 100 {
-			// Compartments (resIdx's default) is an info-only view now
-			// (F6) rather than the old navigation entry point, so landing
-			// on it first has nothing useful to do — open the resource
-			// search immediately instead, prompting a real pick.
-			m.openResourceSearch()
-			return m, nil
 		}
 		return m, splashTickCmd()
 
@@ -1572,8 +1588,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch m.mode {
 		case modeSplash:
-			if msg.String() == "q" || msg.String() == "ctrl+c" {
+			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
+			}
+			for _, it := range splashMenuItems {
+				if msg.String() == it.key {
+					return m, it.action(&m)
+				}
 			}
 			return m, nil
 		case modeDetail:
@@ -1700,7 +1721,7 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
-		m.mode = modeTable
+		m.mode = m.pickerReturnMode
 		return m, nil
 	case "enter":
 		return m.confirmPicker()
@@ -1750,7 +1771,7 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) confirmPicker() (tea.Model, tea.Cmd) {
 	item, ok := m.picker.selected()
 	if !ok {
-		m.mode = modeTable
+		m.mode = m.pickerReturnMode
 		return m, nil
 	}
 	if m.picker.kind == pickerResource && item.key == "" {
@@ -2455,6 +2476,13 @@ func (m Model) viewContent() string {
 	if m.mode == modeSplash {
 		return renderSplash(m)
 	}
+	// The resource search opened from the home screen (splash.go's "f")
+	// floats over the home menu itself instead of the ordinary header/table
+	// chrome underneath — there's no resource loaded there yet, so showing
+	// it would just be an empty table for no reason.
+	if m.mode == modePicker && m.picker.kind == pickerResource && m.pickerReturnMode == modeSplash {
+		return overlayCenter(renderSplash(m), m.renderResourceSearch(), m.width, m.height)
+	}
 
 	var b strings.Builder
 
@@ -2589,10 +2617,54 @@ func (m Model) viewContent() string {
 	if m.mode == modeDetail && m.resourceMap != nil {
 		out = overlayBottom(out, m.renderResourceMapOverlayBox(), m.width)
 	}
+	if m.showsEmptyResourceHint() {
+		out = overlayCenter(out, m.renderEmptyResourceHint(), m.width, m.height)
+	}
 	if m.showHelp {
 		out = overlayBottomRight(out, renderHelpBox(m), m.width)
 	}
 	return out
+}
+
+// showsEmptyResourceHint is true when the table has genuinely finished
+// loading with zero rows — not mid-fetch (m.loading), not erroring, and not
+// just narrowed to nothing by a filter query. The common real case: jumping
+// straight to a resource from the home screen (or "f") lands on the root
+// compartment, which usually holds nothing directly — everything lives in
+// sub-compartments — so a first-time user sees a blank table with no clue
+// why.
+func (m Model) showsEmptyResourceHint() bool {
+	return m.mode == modeTable && !m.loading && m.err == nil &&
+		m.filterQuery == "" && len(m.displayRows) == 0
+}
+
+// renderEmptyResourceHint is the floating hint showsEmptyResourceHint
+// triggers: the two ways out of an empty root-compartment view. Once
+// subtree mode (F3/Shift+C) is already on, suggesting it again would be
+// wrong — an empty result there means the whole tree came back empty, so
+// only "pick a different compartment" applies.
+func (m Model) renderEmptyResourceHint() string {
+	plain, key := statusStyle.Render, splashMenuKeyStyle.Render
+
+	// One Render() call per LINE, joined with a plain "\n" outside all of
+	// them — a "\n" embedded inside a styled Render() call gets its color
+	// reset code emitted right after the newline, on the next line, which
+	// throws off the box's per-line width accounting and misaligns/wraps
+	// the text oddly.
+	lines := []string{
+		plain(fmt.Sprintf("No %s found here.", m.current().Label())),
+		"",
+	}
+	if m.subtreeOn {
+		lines = append(lines, plain("Press ")+key("c")+plain(" to pick a different compartment."))
+	} else {
+		lines = append(lines,
+			plain("Press ")+key("shift+c")+plain(" to enable subtree mode and see resources"),
+			plain("in every sub-compartment, or press ")+key("c")+plain(" to pick a different"),
+			plain("compartment."),
+		)
+	}
+	return boxStyle.Render(strings.Join(lines, "\n"))
 }
 
 // cornerLogoArt is a compact 3-line block-font "TOCI", a scaled-down
@@ -2677,7 +2749,7 @@ func (m Model) renderResourceSearch() string {
 	// the same accounting elsewhere. Off by those 2 extra columns, this
 	// line was wide enough to make lipgloss soft-wrap it onto a second
 	// row instead of just filling the divider's own row.
-	b.WriteString(strings.Repeat("─", width-4))
+	b.WriteString(splashMenuKeyStyle.Render(strings.Repeat("─", width-4)))
 	b.WriteString("\n")
 	for i, it := range m.picker.filtered {
 		// A category header (resourcePickerItems) has no key — nothing to

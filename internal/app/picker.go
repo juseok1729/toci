@@ -51,8 +51,13 @@ type picker struct {
 
 func newPicker(kind pickerKind, title string, items []pickerItem) picker {
 	ti := textinput.New()
-	ti.Placeholder = "type to filter..."
+	if kind == pickerResource {
+		ti.Placeholder = "Select the resource you want to view..."
+	} else {
+		ti.Placeholder = "type to filter..."
+	}
 	ti.Prompt = "" // renderPicker/renderResourceSearch draw their own "> " prefix
+	ti.SetWidth(textInputWidth)
 	ti.Focus()
 	return picker{kind: kind, title: title, input: ti, items: items, filtered: items}
 }
