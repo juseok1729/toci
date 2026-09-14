@@ -86,6 +86,7 @@ func (p *picker) refilter() {
 	if p.cursor < 0 {
 		p.cursor = 0
 	}
+	p.cursor = selectableIndex(p.filtered, p.cursor)
 }
 
 func (p *picker) selected() (pickerItem, bool) {
@@ -93,4 +94,47 @@ func (p *picker) selected() (pickerItem, bool) {
 		return pickerItem{}, false
 	}
 	return p.filtered[p.cursor], true
+}
+
+// selectableIndex finds the nearest selectable item to from (a real
+// resource, pickerItem.key != "") — resourcePickerItems is the only
+// producer of the key == "" category-header rows this skips, so this is a
+// no-op for every other picker kind. Prefers scanning forward from from;
+// falls back to scanning backward if there's nothing selectable ahead.
+// Returns from unchanged if the list has nothing selectable at all (e.g.
+// filtered to zero items), which selected()'s own bounds check handles.
+func selectableIndex(items []pickerItem, from int) int {
+	for i := from; i < len(items); i++ {
+		if items[i].key != "" {
+			return i
+		}
+	}
+	for i := from; i >= 0; i-- {
+		if items[i].key != "" {
+			return i
+		}
+	}
+	return from
+}
+
+// cursorUp/cursorDown move to the nearest selectable item strictly before/
+// after the current cursor, skipping any category headers in between —
+// unlike selectableIndex (which can land ON the starting index), so
+// pressing up/down always moves off a header rather than settling there.
+func (p *picker) cursorUp() {
+	for i := p.cursor - 1; i >= 0; i-- {
+		if p.filtered[i].key != "" {
+			p.cursor = i
+			return
+		}
+	}
+}
+
+func (p *picker) cursorDown() {
+	for i := p.cursor + 1; i < len(p.filtered); i++ {
+		if p.filtered[i].key != "" {
+			p.cursor = i
+			return
+		}
+	}
 }

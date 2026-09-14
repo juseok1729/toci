@@ -1763,14 +1763,10 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "up", "ctrl+k":
-		if m.picker.cursor > 0 {
-			m.picker.cursor--
-		}
+		m.picker.cursorUp()
 		return m, nil
 	case "down", "ctrl+j":
-		if m.picker.cursor < len(m.picker.filtered)-1 {
-			m.picker.cursor++
-		}
+		m.picker.cursorDown()
 		return m, nil
 	}
 	var cmd tea.Cmd
