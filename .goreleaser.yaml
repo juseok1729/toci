@@ -61,6 +61,10 @@ homebrew_casks:
     repository:
       owner: juseok1729
       name: homebrew-toci
+      # Without this, goreleaser pushes with the default GITHUB_TOKEN,
+      # which only has access to *this* repo — 403s trying to write to
+      # homebrew-toci. See release.yml.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
     homepage: https://github.com/juseok1729/toci
     description: Terminal UI for Oracle Cloud Infrastructure
