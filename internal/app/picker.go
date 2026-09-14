@@ -2,6 +2,7 @@ package app
 
 import (
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -53,6 +54,12 @@ func newPicker(kind pickerKind, title string, items []pickerItem) picker {
 	ti := textinput.New()
 	if kind == pickerResource {
 		ti.Placeholder = "Select the resource you want to view..."
+		// The "f" search's own cursor color — every other picker (and the
+		// resource table's own row cursor, an unrelated selStyle highlight)
+		// keeps the textinput package's default.
+		styles := ti.Styles()
+		styles.Cursor.Color = lipgloss.Color("#f6cbcb")
+		ti.SetStyles(styles)
 	} else {
 		ti.Placeholder = "type to filter..."
 	}

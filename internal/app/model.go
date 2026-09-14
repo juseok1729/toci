@@ -2780,6 +2780,13 @@ func (m Model) renderResourceSearch() string {
 	// box (table, other pickers, ...) keeps its usual green.
 	titleLogoStyle := titleStyle.Foreground(splashLogoStyle.GetForeground())
 	countLogoStyle := statusStyle.Foreground(splashLogoStyle.GetForeground())
+	// The highlighted row's own color — #f6cbcb instead of the shared
+	// selStyle's green (ociSelBg), scoped to this box alone so the
+	// resource table's row cursor (model.go's other selStyle.Render call,
+	// via table.Styles.Selected) keeps its usual color. Foreground flips
+	// to near-black: selStyle's white text has poor contrast against a
+	// background this light.
+	searchSelStyle := selStyle.Background(lipgloss.Color("#f6cbcb")).Foreground(lipgloss.Color("16"))
 
 	var b strings.Builder
 	b.WriteString("> ")
@@ -2796,9 +2803,10 @@ func (m Model) renderResourceSearch() string {
 	for i, it := range m.picker.filtered {
 		// A category header (resourcePickerItems) has no key — nothing to
 		// select, so it's dimmed via titleStyle instead of plain text, but
-		// only when it isn't the highlighted row (selStyle's own styling
-		// wins there, same as any other row — see embedTwoInLine's doc for
-		// why nesting two Render calls' ANSI spans is worth avoiding).
+		// only when it isn't the highlighted row (searchSelStyle's own
+		// styling wins there, same as any other row — see embedTwoInLine's
+		// doc for why nesting two Render calls' ANSI spans is worth
+		// avoiding).
 		isCategory := it.key == ""
 		text := it.glyph + it.label
 		if !isCategory && it.isCurrent {
@@ -2807,7 +2815,7 @@ func (m Model) renderResourceSearch() string {
 		var line string
 		switch {
 		case i == m.picker.cursor:
-			line = selStyle.Render("› " + text)
+			line = searchSelStyle.Render("› " + text)
 		case isCategory:
 			line = "  " + titleLogoStyle.Render(text)
 		default:
