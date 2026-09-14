@@ -138,9 +138,9 @@ func TestUpdatePickerMouseClickOnResourceSearchSelectsWithoutConfirming(t *testi
 	m.openResourceSearch()
 
 	box := m.renderResourceSearch()
-	boxWidth, boxLines := overlayBoxDims(box)
+	boxWidth, _ := overlayBoxDims(box)
 	boxX := (m.width - boxWidth) / 2
-	boxY := (m.height - len(boxLines)) / 3
+	boxY := m.resourceSearchY()
 
 	// Item index 1 is the first real resource — index 0 is always a
 	// category header (see resourcePickerItems).
@@ -174,9 +174,9 @@ func TestUpdatePickerMouseDoubleClickOnResourceSearchConfirms(t *testing.T) {
 	m.openResourceSearch()
 
 	box := m.renderResourceSearch()
-	boxWidth, boxLines := overlayBoxDims(box)
+	boxWidth, _ := overlayBoxDims(box)
 	boxX := (m.width - boxWidth) / 2
-	boxY := (m.height - len(boxLines)) / 3
+	boxY := m.resourceSearchY()
 	clickY := boxY + 1 + pickerResourceItemsTop + 1
 	click := tea.MouseClickMsg{X: boxX + 4, Y: clickY, Button: tea.MouseLeft}
 
@@ -207,9 +207,9 @@ func TestUpdatePickerMouseClickOnResourceSearchDoesNotConfirmAfterWindowExpires(
 	m.openResourceSearch()
 
 	box := m.renderResourceSearch()
-	boxWidth, boxLines := overlayBoxDims(box)
+	boxWidth, _ := overlayBoxDims(box)
 	boxX := (m.width - boxWidth) / 2
-	boxY := (m.height - len(boxLines)) / 3
+	boxY := m.resourceSearchY()
 	clickY := boxY + 1 + pickerResourceItemsTop + 1
 	click := tea.MouseClickMsg{X: boxX + 4, Y: clickY, Button: tea.MouseLeft}
 

@@ -1,0 +1,28 @@
+package app
+
+// resourceDescriptions is the "f" resource search's preview-pane copy, one
+// paragraph per registry.Resource.Key() — plain OCI documentation-style
+// descriptions, not tied to anything fetched at runtime. Keyed by Key()
+// rather than a Resource method so adding one doesn't touch every resource
+// file in internal/registry, same idea as resourceCategories.
+var resourceDescriptions = map[string]string{
+	"instance":               "An instance is a compute host. Choose between virtual machines (VMs) and bare metal instances. The image that you use to launch an instance determines its operating system and other software.",
+	"vcn":                    "Virtual Cloud Networks (VCNs) are private virtual networks you set up in Oracle Cloud Infrastructure. You can attach gateways, route tables, and security lists to specify routing and security rules.",
+	"subnet":                 "A subnet is a subdivision of a VCN, consisting of a contiguous range of IP addresses that don't overlap with the VCN's other subnets. You mark a subnet public or private, which controls whether its VNICs can have a public IP address.",
+	"route-table":            "Traffic within the VCN is handled by the VCN's local routing by default. Intra-VCN routing allows you more control over routing between subnets.",
+	"security-list":          "A security list acts as a virtual firewall, with ingress and egress rules that specify the types of traffic allowed in and out of the VNICs it's associated with. Unlike an NSG, a security list applies to every VNIC in the subnets it's attached to.",
+	"nsg":                    "A network security group consists of a set of VNICs and a set of security rules that apply to those VNICs. For example: you create a network security group for all the instances in the VCN that have the same security posture. For comparison, a VCN security list consists of a set of security rules that apply to all the VNICs in the subnets that the security list is associated with.",
+	"drg":                    "Dynamic routing gateways (DRGs) are optional virtual routers that you can add to your VCN. They provide a path for private network traffic between your VCN and on-premises network.",
+	"drg-attachment":         "A DRG attachment connects a DRG to a network — a VCN, an on-premises network over IPSec or FastConnect, or a remote peering connection — so traffic between them can flow through the DRG. A single DRG can have many attachments.",
+	"drg-route-table":        "A DRG route table manages routing within the DRG. Two route tables are automatically created for a new DRG, and you can create more route tables as needed. You can configure all resources of a certain type to use the same route table.",
+	"drg-route-distribution": "A DRG route distribution controls which routes get imported into a DRG route table from its attachments, or exported out to them — the mechanism that decides which networks a DRG actually shares routes between.",
+	"lb":                     "The load balancer service provides a reverse proxy solution that hides the IP of the client from backend application server and vice versa. It is capable of performing advanced layer 7 (HTTP/HTTPS), layer 4 (TCP) load balancing and SSL offloading.",
+	"oke":                    "Container Engine for Kubernetes (OKE) is a managed Kubernetes service. You describe the compute resources your workloads need, and OKE provisions and operates the underlying Kubernetes cluster for you on Oracle Cloud Infrastructure.",
+	"file-system":            "File Storage Service (FSS) provides a durable, scalable NFS file system for use with any bare metal, virtual machine, or container instance. A file system's storage capacity grows and shrinks automatically as you add or remove data.",
+	"bucket":                 "A bucket is a logical container for storing objects in Object Storage. It's a flat namespace of key-value pairs — object name to data — with no folder hierarchy of its own, though object names with slashes can be displayed as one.",
+	"db-system":              "A DB system is the compute and storage foundation for one or more Oracle databases — virtual machine, bare metal, or Exadata — that OCI provisions, patches, and backs up as a unit.",
+	"adb":                    "Autonomous Database is a fully managed database that automates provisioning, tuning, patching, and backup. It runs OLTP, data warehouse, JSON, or mixed workloads without you having to manage the underlying infrastructure.",
+	"exadata":                "An Exadata VM cluster is a set of virtual machines on Exadata Cloud Infrastructure that share the underlying Exadata hardware and provide the compute layer for one or more DB systems running on it.",
+	"exascale":               "Exadata Database Service on Exascale Infrastructure pools compute and storage across a fleet of Exadata hardware, letting VM clusters scale compute and storage independently and elastically instead of in fixed increments.",
+	"compartment":            "A compartment is a logical container for organizing and isolating your cloud resources — for billing, access control via IAM policies, and management. Every resource belongs to exactly one compartment.",
+}

@@ -1900,11 +1900,16 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var box string
 	var boxX, boxY, itemsTop int
 	if m.picker.kind == pickerResource {
-		// Overlaid centered over the table — see View()'s overlayCenter call.
-		box = m.renderResourceSearch()
-		boxWidth, boxLines := overlayBoxDims(box)
-		boxX = (m.width - boxWidth) / 2
-		boxY = (m.height - len(boxLines)) / 3
+		// Overlaid centered over the table — see View()'s overlayCenter
+		// call. boxX centers on the combined (list + description panes)
+		// block's own width, but a click can only ever land on the list
+		// pane — box is that pane alone so pickerItemAt's X bound excludes
+		// the description pane sitting to its right (its own width, not
+		// the combined one, is what overlayBoxDims below sees).
+		combinedWidth, _ := overlayBoxDims(m.renderResourceSearch())
+		boxX = (m.width - combinedWidth) / 2
+		box = m.renderResourceSearchList(m.resourceSearchListWidth())
+		boxY = m.resourceSearchY()
 		itemsTop = pickerResourceItemsTop
 	} else {
 		// Drawn inline as the main panel, itself preceded by the header
@@ -2516,7 +2521,7 @@ func (m Model) viewContent() string {
 	// chrome underneath — there's no resource loaded there yet, so showing
 	// it would just be an empty table for no reason.
 	if m.mode == modePicker && m.picker.kind == pickerResource && m.pickerReturnMode == modeSplash {
-		return overlayCenter(renderSplash(m), m.renderResourceSearch(), m.width, m.height)
+		return overlayCenterAtY(renderSplash(m), m.renderResourceSearch(), m.width, m.resourceSearchY())
 	}
 
 	var b strings.Builder
@@ -2644,7 +2649,7 @@ func (m Model) viewContent() string {
 	out = overlayTopRight(out, cornerLogo, m.width-2)
 	out = overlayRightAt(out, headerValueStyle.Render(m.cornerSubtitle()), m.width-2, cornerLogoRows+2)
 	if m.mode == modePicker && m.picker.kind == pickerResource {
-		out = overlayCenter(out, m.renderResourceSearch(), m.width, m.height)
+		out = overlayCenterAtY(out, m.renderResourceSearch(), m.width, m.resourceSearchY())
 	}
 	if m.mode == modePicker && m.picker.kind == pickerCompartment {
 		out = overlayCenter(out, m.renderCompartmentPicker(), m.width, m.height)
@@ -2756,11 +2761,43 @@ func (m Model) renderPicker() string {
 	return boxStyle.Render(b.String())
 }
 
-// renderResourceSearch draws the "f" resource-search picker as a wide,
-// Telescope-style box: a fixed width (not sized to content, unlike
-// renderPicker) with the title and match count punched into the top border
-// and a divider between the input and the results.
-func (m Model) renderResourceSearch() string {
+// resourceSearchY is the "f" search box's vertical position — biased 1/3 of
+// the way down when it's floating over the home screen (pickerReturnMode ==
+// modeSplash, see viewContent), same as every other centered overlay, but
+// pushed further down when it's floating over the ordinary header/table
+// instead, so the header block stays visible above it rather than sitting
+// under the box's own top-biased position. Shared by viewContent
+// (rendering) and updatePickerMouse (click math) so they never disagree on
+// where the box actually is.
+//
+// Anchored to the box's maximum possible height (every item, no filter —
+// see resourcePickerItems) rather than however tall it happens to be right
+// now: narrowing the list with a query should only shorten the box from the
+// bottom, not slide the whole thing (top edge included) down as it shrinks.
+func (m Model) resourceSearchY() int {
+	maxItems := len(resourcePickerItems(m.resources, m.current().Key(), ""))
+	maxLines := maxItems + pickerResourceItemsTop + 2 // +2: the box's own top/bottom border rows
+	spare := m.height - maxLines
+	if m.pickerReturnMode == modeSplash {
+		return spare / 3
+	}
+	return spare * 4 / 7
+}
+
+// resourceSearchListWidth/resourceSearchTotalWidth compute the "f" search's
+// list-pane width and the width of the whole picker (list + gap +
+// description pane, when there's room for one — see renderResourceSearch).
+// Split out so updatePickerMouse's click math can rebuild the same list
+// width renderResourceSearch used without re-deriving it differently.
+func (m Model) resourceSearchListWidth() int {
+	total := m.resourceSearchTotalWidth()
+	if total < resourceSearchSplitThreshold {
+		return total // no room for a description pane — see renderResourceSearch
+	}
+	return total / 2 // no gap between the two panes — their own borders sit flush against each other
+}
+
+func (m Model) resourceSearchTotalWidth() int {
 	width := m.width * 4 / 5
 	if width < 50 {
 		width = 50
@@ -2773,7 +2810,39 @@ func (m Model) renderResourceSearch() string {
 	if width < 20 {
 		width = 20
 	}
+	return width
+}
 
+// resourceSearchSplitThreshold is the minimum total width that gets a
+// description pane at all — below it (a narrow terminal), the "f" search
+// falls back to the plain single list box, same as before the split.
+const resourceSearchSplitThreshold = 80
+
+// renderResourceSearch draws the "f" resource-search picker as a wide,
+// Telescope-style split view: the fuzzy tree on the left (renderResourceSearchList)
+// and a description of whatever's under the cursor on the right
+// (renderResourceSearchDescription) — the extra width the tree box picked
+// up when it was widened otherwise just sat empty to the right of every
+// short resource name.
+func (m Model) renderResourceSearch() string {
+	total := m.resourceSearchTotalWidth()
+	list := m.renderResourceSearchList(m.resourceSearchListWidth())
+	if total < resourceSearchSplitThreshold {
+		return list
+	}
+	descWidth := total - m.resourceSearchListWidth() // no gap — see resourceSearchListWidth
+	// Matches the list box's own height (line count) rather than sizing to
+	// its own short paragraph — LazyVim's own file/preview panes run the
+	// full height too, not just as tall as whatever's in the preview.
+	descHeight := strings.Count(list, "\n") + 1
+	return lipgloss.JoinHorizontal(lipgloss.Top, list, m.renderResourceSearchDescription(descWidth, descHeight))
+}
+
+// renderResourceSearchList draws the fuzzy tree itself: a fixed width (not
+// sized to content, unlike renderPicker) with the title and match count
+// punched into the top border and a divider between the input and the
+// results.
+func (m Model) renderResourceSearchList(width int) string {
 	// Title, category headers, and the match count all go logo red too —
 	// derived from the shared titleStyle/statusStyle (keeping their
 	// weight) rather than touching those globals, so every other bordered
@@ -2849,6 +2918,64 @@ func (m Model) renderResourceSearch() string {
 	} else {
 		lines[0] = embedInLine(lines[0], title, titleX)
 	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderResourceSearchDescription draws the preview pane: a short paragraph
+// (resourceDescriptions) about whichever resource is currently highlighted,
+// titled with its name — the "f" search's equivalent of a file picker's
+// preview pane. height matches the list box's own line count (see
+// renderResourceSearch), same as LazyVim's own file/preview panes running
+// full height regardless of how little the preview side actually has.
+func (m Model) renderResourceSearchDescription(width, height int) string {
+	titleLogoStyle := titleStyle.Foreground(splashLogoStyle.GetForeground())
+
+	label := "Description"
+	desc := "No matches."
+	if item, ok := m.picker.selected(); ok {
+		switch {
+		case item.key == "":
+			desc = "A category — pick a resource below to see its description."
+		default:
+			label = item.label
+			if d, known := resourceDescriptions[item.key]; known {
+				desc = d
+			} else {
+				desc = "No description yet for this resource."
+			}
+		}
+	}
+
+	// Wrap as plain text first, then color each line separately — coloring
+	// the whole (possibly multi-line) block in one Render call would leak
+	// that style's reset code onto the start of the next line and throw
+	// off the box's per-line width accounting (see renderEmptyResourceHint's
+	// own doc for the same lesson learned the hard way).
+	innerWidth := width - 4 // border (2) + padding (2)
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	wrapped := strings.Split(lipgloss.NewStyle().Width(innerWidth).Render(desc), "\n")
+	for i, l := range wrapped {
+		wrapped[i] = statusStyle.Render(l)
+	}
+
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(splashLogoStyle.GetForeground()).
+		Width(width).
+		Height(height).
+		Padding(0, 1)
+	lines := strings.Split(style.Render(strings.Join(wrapped, "\n")), "\n")
+
+	title := titleLogoStyle.Render(" " + label + " ")
+	topWidth := ansi.StringWidth(lines[0])
+	titleX := (topWidth - ansi.StringWidth(title)) / 2
+	if titleX < 0 {
+		titleX = 0
+	}
+	lines[0] = embedInLine(lines[0], title, titleX)
 
 	return strings.Join(lines, "\n")
 }

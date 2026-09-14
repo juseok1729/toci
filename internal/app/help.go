@@ -91,6 +91,17 @@ func overlayCenter(base, box string, termWidth, termHeight int) string {
 	return spliceOverlay(baseLines, boxLines, x, y, termWidth)
 }
 
+// overlayCenterAtY is overlayCenter with an explicit y instead of always
+// biasing 1/3 of the way down — used by the resource-search box, which
+// wants a different vertical position depending on what it's floating
+// over (see Model.resourceSearchY).
+func overlayCenterAtY(base, box string, termWidth, y int) string {
+	boxWidth, boxLines := overlayBoxDims(box)
+	baseLines := strings.Split(base, "\n")
+	x := (termWidth - boxWidth) / 2
+	return spliceOverlay(baseLines, boxLines, x, y, termWidth)
+}
+
 // overlayBottom splices box onto the bottom of an already-rendered view,
 // horizontally centered — the same idea as overlayBottomRight, just
 // centered instead of right-aligned. Used for the "M" resource map, which
