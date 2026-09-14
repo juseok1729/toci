@@ -2,6 +2,7 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
@@ -155,5 +156,70 @@ func TestUpdatePickerMouseClickOnResourceSearchSelectsWithoutConfirming(t *testi
 	}
 	if cmd != nil {
 		t.Error("expected no command — a click on the resource search should not switch resources yet")
+	}
+}
+
+// TestUpdatePickerMouseDoubleClickOnResourceSearchConfirms checks the other
+// half of the story above: two clicks landing on the same row within
+// pickerDoubleClickWindow should confirm it, the mouse equivalent of
+// highlighting a row and pressing Enter.
+func TestUpdatePickerMouseDoubleClickOnResourceSearchConfirms(t *testing.T) {
+	m := Model{
+		resources: registry.All(nil),
+		width:     120,
+		height:    40,
+		mode:      modePicker,
+		table:     newTable(20),
+	}
+	m.openResourceSearch()
+
+	box := m.renderResourceSearch()
+	boxWidth, boxLines := overlayBoxDims(box)
+	boxX := (m.width - boxWidth) / 2
+	boxY := (m.height - len(boxLines)) / 3
+	clickY := boxY + 1 + pickerResourceItemsTop + 1
+	click := tea.MouseClickMsg{X: boxX + 4, Y: clickY, Button: tea.MouseLeft}
+
+	mi, _ := m.Update(click)
+	m2 := mi.(Model)
+	if m2.mode != modePicker {
+		t.Fatalf("mode after the first click = %v, want modePicker", m2.mode)
+	}
+
+	mi, _ = m2.Update(click)
+	m3 := mi.(Model)
+	if m3.mode != modeTable {
+		t.Errorf("mode after a second click on the same row = %v, want modeTable (double-click should confirm)", m3.mode)
+	}
+}
+
+// TestUpdatePickerMouseClickOnResourceSearchDoesNotConfirmAfterWindowExpires
+// makes sure two unrelated clicks on the same row, far enough apart in time,
+// don't confirm by accident — only a genuine double-click should.
+func TestUpdatePickerMouseClickOnResourceSearchDoesNotConfirmAfterWindowExpires(t *testing.T) {
+	m := Model{
+		resources: registry.All(nil),
+		width:     120,
+		height:    40,
+		mode:      modePicker,
+		table:     newTable(20),
+	}
+	m.openResourceSearch()
+
+	box := m.renderResourceSearch()
+	boxWidth, boxLines := overlayBoxDims(box)
+	boxX := (m.width - boxWidth) / 2
+	boxY := (m.height - len(boxLines)) / 3
+	clickY := boxY + 1 + pickerResourceItemsTop + 1
+	click := tea.MouseClickMsg{X: boxX + 4, Y: clickY, Button: tea.MouseLeft}
+
+	mi, _ := m.Update(click)
+	m2 := mi.(Model)
+	m2.pickerLastClickAt = m2.pickerLastClickAt.Add(-pickerDoubleClickWindow - time.Second)
+
+	mi, _ = m2.Update(click)
+	m3 := mi.(Model)
+	if m3.mode != modePicker {
+		t.Errorf("mode after a second click past the double-click window = %v, want modePicker (should not confirm)", m3.mode)
 	}
 }

@@ -162,6 +162,18 @@ type Model struct {
 	// resourceless) table underneath it.
 	pickerReturnMode mode
 
+	// pickerLastClickIndex/pickerLastClickAt track the resource-search
+	// tree's last click (see updatePickerMouse) to detect a double-click:
+	// a second click landing on the same row within doubleClickWindow
+	// confirms it, same as Enter — bubbletea has no built-in click-count,
+	// so this is hand-rolled from two ordinary MouseClickMsg events.
+	// -1 (pickerNoClick) means "no prior click to match against", not
+	// merely "the cursor happens to already be there" (e.g. right after
+	// opening the picker, which defaults the cursor onto the first
+	// resource with no click involved at all).
+	pickerLastClickIndex int
+	pickerLastClickAt    time.Time
+
 	regionItems []pickerItem
 
 	writeEnabled  bool
@@ -365,23 +377,24 @@ func New(factory *clients.Factory, scope registry.Scope, writeEnabled bool, prof
 	pi.SetWidth(textInputWidth)
 
 	return Model{
-		factory:         factory,
-		profile:         profile,
-		version:         version,
-		resources:       registry.All(factory),
-		scope:           scope,
-		compPath:        []crumb{{ID: scope.CompartmentID, Name: "root"}},
-		table:           newTable(20),
-		detail:          viewport.New(viewport.WithWidth(80), viewport.WithHeight(20)),
-		filterInput:     fi,
-		confirmInput:    ci,
-		promptInput:     pi,
-		writeEnabled:    writeEnabled,
-		mode:            modeSplash,
-		splashPhrase:    splashPhrases[rand.Intn(len(splashPhrases))],
-		blinkEnabled:    true,
-		bastionSessions: map[string]cachedBastionSession{},
-		recentList:      loadRecent(profile),
+		factory:              factory,
+		profile:              profile,
+		version:              version,
+		resources:            registry.All(factory),
+		scope:                scope,
+		compPath:             []crumb{{ID: scope.CompartmentID, Name: "root"}},
+		table:                newTable(20),
+		detail:               viewport.New(viewport.WithWidth(80), viewport.WithHeight(20)),
+		filterInput:          fi,
+		confirmInput:         ci,
+		promptInput:          pi,
+		writeEnabled:         writeEnabled,
+		mode:                 modeSplash,
+		pickerLastClickIndex: pickerNoClick,
+		splashPhrase:         splashPhrases[rand.Intn(len(splashPhrases))],
+		blinkEnabled:         true,
+		bastionSessions:      map[string]cachedBastionSession{},
+		recentList:           loadRecent(profile),
 	}
 }
 
@@ -1200,6 +1213,7 @@ func (m *Model) openResourceSearch() {
 	m.picker = p
 	m.mode = modePicker
 	m.pickerReturnMode = modeTable
+	m.pickerLastClickIndex = pickerNoClick
 }
 
 // exitVcn clears the VCN scope and returns to the VCN list.
@@ -1859,6 +1873,17 @@ func pickerItemAt(clickX, clickY, boxX, boxY, itemsTop int, box string) (int, bo
 	return i, true
 }
 
+// pickerNoClick is pickerLastClickIndex's "nothing to match a double-click
+// against yet" sentinel — 0 would collide with a real row index.
+const pickerNoClick = -1
+
+// pickerDoubleClickWindow is how long a second click on the resource-search
+// tree's already-clicked row has to land to count as a double-click and
+// confirm it (see updatePickerMouse) — long enough for a deliberate second
+// click, short enough that two unrelated clicks on the same row minutes
+// apart don't confirm by accident.
+const pickerDoubleClickWindow = 500 * time.Millisecond
+
 // updatePickerMouse handles a left-click on a picker overlay (region/action/
 // bastion/ssh/resource-search — see picker.go): it maps the click to a
 // filtered item exactly the way each is actually drawn in View(), then
@@ -1898,16 +1923,30 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !ok || i >= len(m.picker.filtered) {
 		return m, nil
 	}
-	m.picker.cursor = i
 	if m.picker.kind == pickerResource {
 		// The resource-search tree has category headers sitting between
 		// real resources — a click there is easy to land near by accident,
-		// and confirming immediately closed the whole picker on those. Just
-		// move the cursor; Enter (or a second click landing on the same
-		// row, since re-clicking the highlighted row is now indistinguishable
-		// from clicking to select it) commits, same as keyboard nav.
+		// so a single click only moves the cursor, never confirms.
+		// Double-clicking the same row confirms it, same as Enter —
+		// bubbletea has no built-in click-count, so this is two ordinary
+		// MouseClickMsg events landing on the same row within
+		// pickerDoubleClickWindow. Comparing against m.picker.cursor
+		// instead (i.e. "clicking the already-highlighted row") would
+		// misfire the very first click after opening the picker, since
+		// openResourceSearch defaults the cursor onto the first resource
+		// with no click involved at all.
+		now := time.Now()
+		doubleClick := i == m.pickerLastClickIndex && now.Sub(m.pickerLastClickAt) < pickerDoubleClickWindow
+		m.picker.cursor = i
+		m.pickerLastClickIndex = i
+		m.pickerLastClickAt = now
+		if doubleClick {
+			m.pickerLastClickIndex = pickerNoClick
+			return m.confirmPicker()
+		}
 		return m, nil
 	}
+	m.picker.cursor = i
 	return m.confirmPicker()
 }
 
