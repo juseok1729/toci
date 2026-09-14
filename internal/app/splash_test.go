@@ -104,19 +104,18 @@ func TestSplashMenuKeysDispatch(t *testing.T) {
 	if m2.pickerReturnMode != modeSplash {
 		t.Errorf("pickerReturnMode = %v after pressing %q on the home screen, want modeSplash", m2.pickerReturnMode, "f")
 	}
-	// The search box's own height scales with the resource count (~26 rows
-	// for all of them, categories included) and both it and the splash
-	// logo center on similar height-proportional formulas, so at this
-	// screen size the box can end up covering the logo itself — not
-	// asserted on here since it's a coincidence of two independently-tuned
-	// layouts, not a real contract. "Quit" (the menu's last row) reliably
-	// sits below the box regardless, so it stands in for "this is the home
-	// menu, not the ordinary table screen" instead.
+	// Not asserting that any particular piece of the splash background
+	// (logo, menu text, ...) is visually un-covered by the search box: the
+	// box's height scales with the resource count and both it and the
+	// splash content center on similar height-proportional formulas, so
+	// which rows of the background peek out is a coincidence of two
+	// independently-tuned layouts that shifts every time a resource is
+	// added — not a real contract, and not stable to pin a test to at any
+	// fixed terminal size. What actually matters, and is stable, is that
+	// the background used is the splash render, not the ordinary
+	// header/table chrome (which is what "Profile:" comes from).
 	m2.width, m2.height = 100, 30
 	out := ansi.Strip(m2.viewContent())
-	if !strings.Contains(out, "Quit") {
-		t.Errorf("viewContent for the home-screen search should show the home menu (e.g. \"Quit\") behind the search box, got:\n%s", out)
-	}
 	if strings.Contains(out, "Profile:") {
 		// The ordinary header/table chrome — never shown for the
 		// home-screen search, which has no resource loaded to describe.

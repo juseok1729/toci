@@ -38,7 +38,7 @@ func TestRenderResourceSearch(t *testing.T) {
 	if !strings.Contains(out, wantCount) {
 		t.Errorf("renderResourceSearch missing match count %q\nfull box:\n%s", wantCount, out)
 	}
-	for _, category := range []string{"Compute", "Network", "Database", "Governance"} {
+	for _, category := range []string{"Compute", "Network", "Containers", "Database", "Governance"} {
 		if !strings.Contains(out, category) {
 			t.Errorf("renderResourceSearch missing category header %q\nfull box:\n%s", category, out)
 		}

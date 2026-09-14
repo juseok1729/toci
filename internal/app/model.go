@@ -1010,7 +1010,7 @@ func (m *Model) relayoutTableColumns() {
 // truth other code checks against.
 var vcnScopedResourceKeys = map[string]bool{
 	"vcn": true, "subnet": true, "route-table": true, "security-list": true,
-	"nsg": true, "instance": true, "lb": true, "db-system": true, "adb": true, "exadata": true, "exascale": true,
+	"nsg": true, "instance": true, "lb": true, "oke": true, "db-system": true, "adb": true, "exadata": true, "exascale": true,
 }
 
 // isVcnDependent reports whether switching to this resource should keep an

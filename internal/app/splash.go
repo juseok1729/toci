@@ -127,6 +127,7 @@ var splashMenuItems = []splashMenuItem{
 	}}, // nf-fa-search
 	{"", "Instances", "i", splashResourceAction("instance")},           // nf-fa-server
 	{"", "VCNs", "v", splashResourceAction("vcn")},                     // nf-fa-sitemap
+	{"", "OKE Clusters", "k", splashResourceAction("oke")},             // nf-fa-cubes
 	{"", "DB Systems", "d", splashResourceAction("db-system")},         // nf-fa-database
 	{"", "Exascale", "e", splashResourceAction("exascale")},            // nf-fa-database
 	{"", "Security Lists", "s", splashResourceAction("security-list")}, // nf-fa-shield

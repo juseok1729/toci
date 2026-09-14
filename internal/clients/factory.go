@@ -8,6 +8,7 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/bastion"
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/computeinstanceagent"
+	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
 	"github.com/oracle/oci-go-sdk/v65/identity"
@@ -171,6 +172,17 @@ func (f *Factory) LoadBalancer(region string) (loadbalancer.LoadBalancerClient, 
 		c, err := loadbalancer.NewLoadBalancerClientWithConfigurationProvider(f.provider)
 		if err != nil {
 			return loadbalancer.LoadBalancerClient{}, err
+		}
+		c.SetRegion(region)
+		return c, nil
+	})
+}
+
+func (f *Factory) ContainerEngine(region string) (containerengine.ContainerEngineClient, error) {
+	return get(f, region, "containerengine", func() (containerengine.ContainerEngineClient, error) {
+		c, err := containerengine.NewContainerEngineClientWithConfigurationProvider(f.provider)
+		if err != nil {
+			return containerengine.ContainerEngineClient{}, err
 		}
 		c.SetRegion(region)
 		return c, nil
