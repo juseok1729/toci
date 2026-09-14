@@ -50,9 +50,9 @@ jobs:
           pip install --quiet cloudsmith-cli
           for f in dist/*.deb; do
             [ -e "$f" ] || continue
-            cloudsmith push deb juseok1729/toci/any-distro/any-version "$f"
+            cloudsmith push deb toci/toci/any-distro/any-version "$f"
           done
           for f in dist/*.rpm; do
             [ -e "$f" ] || continue
-            cloudsmith push rpm juseok1729/toci/any-distro/any-version "$f"
+            cloudsmith push rpm toci/toci/any-distro/any-version "$f"
           done

@@ -63,14 +63,14 @@ Downloads the right release for your OS/arch, verifies it against `checksums.txt
 ### 2. dnf (Oracle Linux / RHEL / Fedora)
 
 ```bash
-curl -1sLf 'https://dl.cloudsmith.io/public/juseok1729/toci/setup.rpm.sh' | sudo -E bash
+curl -1sLf 'https://dl.cloudsmith.io/public/toci/toci/setup.rpm.sh' | sudo -E bash
 sudo dnf install toci
 ```
 
 ### 3. apt (Debian / Ubuntu)
 
 ```bash
-curl -1sLf 'https://dl.cloudsmith.io/public/juseok1729/toci/setup.deb.sh' | sudo -E bash
+curl -1sLf 'https://dl.cloudsmith.io/public/toci/toci/setup.deb.sh' | sudo -E bash
 sudo apt install toci
 ```
 
