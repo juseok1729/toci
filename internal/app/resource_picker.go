@@ -20,6 +20,7 @@ var resourceCategories = []struct {
 		"drg", "drg-attachment", "drg-route-table", "drg-route-distribution",
 		"lb",
 	}},
+	{"Storage", []string{"file-system", "bucket"}},
 	{"Containers", []string{"oke"}},
 	{"Database", []string{"db-system", "adb", "exadata", "exascale"}},
 	// Compartment is last, not first — global scope ("c") already lets

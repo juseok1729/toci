@@ -17,6 +17,8 @@ func All(f *clients.Factory) []Resource {
 		NewDrgRouteTableResource(f),
 		NewDrgRouteDistributionResource(f),
 		NewLoadBalancerResource(f),
+		NewFileSystemResource(f),
+		NewBucketResource(f),
 		NewOkeResource(f),
 		NewDbSystemResource(f),
 		NewAutonomousDatabaseResource(f),

@@ -11,9 +11,11 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
+	"github.com/oracle/oci-go-sdk/v65/filestorage"
 	"github.com/oracle/oci-go-sdk/v65/identity"
 	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/monitoring"
+	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 )
 
 // Factory hands out SDK clients bound to a region, caching one instance per
@@ -183,6 +185,28 @@ func (f *Factory) ContainerEngine(region string) (containerengine.ContainerEngin
 		c, err := containerengine.NewContainerEngineClientWithConfigurationProvider(f.provider)
 		if err != nil {
 			return containerengine.ContainerEngineClient{}, err
+		}
+		c.SetRegion(region)
+		return c, nil
+	})
+}
+
+func (f *Factory) FileStorage(region string) (filestorage.FileStorageClient, error) {
+	return get(f, region, "filestorage", func() (filestorage.FileStorageClient, error) {
+		c, err := filestorage.NewFileStorageClientWithConfigurationProvider(f.provider)
+		if err != nil {
+			return filestorage.FileStorageClient{}, err
+		}
+		c.SetRegion(region)
+		return c, nil
+	})
+}
+
+func (f *Factory) ObjectStorage(region string) (objectstorage.ObjectStorageClient, error) {
+	return get(f, region, "objectstorage", func() (objectstorage.ObjectStorageClient, error) {
+		c, err := objectstorage.NewObjectStorageClientWithConfigurationProvider(f.provider)
+		if err != nil {
+			return objectstorage.ObjectStorageClient{}, err
 		}
 		c.SetRegion(region)
 		return c, nil
