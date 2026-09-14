@@ -2884,7 +2884,15 @@ func (m Model) renderResourceSearchList(width int) string {
 		var line string
 		switch {
 		case i == m.picker.cursor:
-			line = searchSelStyle.Render("› " + text)
+			// Padded to the box's own inner width (width-4: border + padding,
+			// same accounting as the divider above) so the highlight's
+			// background spans the full row, not just the text — matching
+			// the resource table's own row cursor.
+			content := "› " + text
+			if pad := width - 4 - lipgloss.Width(content); pad > 0 {
+				content += strings.Repeat(" ", pad)
+			}
+			line = searchSelStyle.Render(content)
 		case isCategory:
 			line = "  " + titleLogoStyle.Render(text)
 		default:
