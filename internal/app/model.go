@@ -2774,6 +2774,13 @@ func (m Model) renderResourceSearch() string {
 		width = 20
 	}
 
+	// Title, category headers, and the match count all go logo red too —
+	// derived from the shared titleStyle/statusStyle (keeping their
+	// weight) rather than touching those globals, so every other bordered
+	// box (table, other pickers, ...) keeps its usual green.
+	titleLogoStyle := titleStyle.Foreground(splashLogoStyle.GetForeground())
+	countLogoStyle := statusStyle.Foreground(splashLogoStyle.GetForeground())
+
 	var b strings.Builder
 	b.WriteString("> ")
 	b.WriteString(m.picker.input.View())
@@ -2802,7 +2809,7 @@ func (m Model) renderResourceSearch() string {
 		case i == m.picker.cursor:
 			line = selStyle.Render("› " + text)
 		case isCategory:
-			line = "  " + titleStyle.Render(text)
+			line = "  " + titleLogoStyle.Render(text)
 		default:
 			line = "  " + text
 		}
@@ -2813,18 +2820,21 @@ func (m Model) renderResourceSearch() string {
 		b.WriteString(statusStyle.Render("  (no matches)"))
 	}
 
+	// Border color matches splashLogoStyle (the home screen's logo/corner
+	// wordmark red) rather than the app's usual green ociBorder — this box
+	// is the "f" search specifically, not every bordered box.
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(ociBorder)).
+		BorderForeground(splashLogoStyle.GetForeground()).
 		Width(width).
 		Padding(0, 1)
 	lines := strings.Split(style.Render(strings.TrimRight(b.String(), "\n")), "\n")
 
-	title := titleStyle.Render(" " + m.picker.title + " ")
+	title := titleLogoStyle.Render(" " + m.picker.title + " ")
 	topWidth := ansi.StringWidth(lines[0])
 	titleX := (topWidth - ansi.StringWidth(title)) / 2
 
-	count := statusStyle.Render(fmt.Sprintf(" %d/%d ", pickerLeafCount(m.picker.filtered), len(m.resources)))
+	count := countLogoStyle.Render(fmt.Sprintf(" %d/%d ", pickerLeafCount(m.picker.filtered), len(m.resources)))
 	countX := topWidth - ansi.StringWidth(count) - 1
 	if countX > titleX+ansi.StringWidth(title) {
 		lines[0] = embedTwoInLine(lines[0], title, titleX, count, countX)

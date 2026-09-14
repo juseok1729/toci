@@ -31,7 +31,7 @@ var splashLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#fc6464")).
 // same red brand as the logo without going as pale as a full palette step
 // up (210). A true-color hex, not a palette index, so it can land between
 // them.
-var splashMenuLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f48282"))
+var splashMenuLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#fc6464"))
 
 // splashMenuKeyStyle colors the home screen's menu keys ("f", "i", ...) — a
 // pale yellow (228), lighter than spinnerStyle's saturated gold (220) below,
@@ -146,7 +146,7 @@ func splashTickCmd() tea.Cmd {
 // — wide, like LazyVim's own dashboard, so the row spans well past the logo
 // instead of collapsing into a small block that reads as huddled in the
 // middle of an otherwise-empty screen.
-const splashMenuWidth = 56
+const splashMenuWidth = 60
 
 // splashMenuView renders the label/key rows: labels in splashMenuLabelStyle
 // (bright red) padded out to splashMenuWidth, keys right-aligned in
@@ -190,7 +190,7 @@ func renderSplash(m Model) string {
 
 	logo := splashLogoStyle.Render(asciiLogo)
 	subtitle := splashLogoStyle.Render("Terminal UI for Oracle Cloud Infrastructure")
-	profile := splashProfileStyle.Render(m.profile)
+	profile := splashProfileStyle.Render(" " + m.profile) // nf-fa-user
 	menu := splashMenuView()
 
 	status := splashPhraseStyle.Render(splashVersionText(m))
