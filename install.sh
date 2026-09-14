@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the latest (or $TOCI_VERSION) toci release for this OS/arch.
 #
-#   curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/master/install.sh | sh
 #
 # Static Go binary (CGO_ENABLED=0) — no glibc dependency, so this works the
 # same on Oracle Linux, Ubuntu, other glibc/musl distros, and WSL.

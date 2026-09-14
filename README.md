@@ -55,7 +55,7 @@ The binary is a static, pure-Go executable (`CGO_ENABLED=0`) — no glibc depend
 ### 1. Install script (any Linux or macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/master/install.sh | sh
 ```
 
 Downloads the right release for your OS/arch, verifies it against `checksums.txt`, and installs to `/usr/local/bin` (falls back to `~/.local/bin` if that's not writable and you're not root — no `sudo` required).

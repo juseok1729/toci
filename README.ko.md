@@ -55,7 +55,7 @@
 ### 1. 설치 스크립트 (Linux/macOS 공통)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/master/install.sh | sh
 ```
 
 OS/아키텍처를 자동 판별해 릴리즈를 받고 `checksums.txt`로 검증한 뒤 `/usr/local/bin`에 설치합니다(쓰기 권한이 없고 root도 아니면 `sudo` 없이 `~/.local/bin`으로 폴백).
