@@ -80,6 +80,12 @@ sudo apt install toci
 brew install juseok1729/toci/toci
 ```
 
+On macOS, Gatekeeper will refuse to run it and offer to move it to the Trash — the binary isn't code-signed/notarized yet. Clear the quarantine flag once after installing:
+
+```bash
+xattr -d com.apple.quarantine "$(brew --prefix)/bin/toci"
+```
+
 ### 5. Manual download / `go install`
 
 Download a `toci_<os>_<arch>.tar.gz` from the [Releases page](https://github.com/juseok1729/toci/releases/latest) (each release also ships a `checksums.txt`), or build from source:

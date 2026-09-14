@@ -80,6 +80,12 @@ sudo apt install toci
 brew install juseok1729/toci/toci
 ```
 
+macOS에서는 아직 코드사이닝/notarize가 안 되어 있어서 Gatekeeper가 실행을 막고 휴지통으로 보내라고 뜹니다. 설치 후 한 번만 quarantine 플래그를 지워주면 됩니다:
+
+```bash
+xattr -d com.apple.quarantine "$(brew --prefix)/bin/toci"
+```
+
 ### 5. 수동 다운로드 / `go install`
 
 [Releases 페이지](https://github.com/juseok1729/toci/releases/latest)에서 `toci_<os>_<arch>.tar.gz`를 직접 받거나(검증용 `checksums.txt`도 같이 올라갑니다), 소스에서 설치:
