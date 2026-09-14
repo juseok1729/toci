@@ -2726,7 +2726,7 @@ func (m Model) renderPicker() string {
 // renderPicker) with the title and match count punched into the top border
 // and a divider between the input and the results.
 func (m Model) renderResourceSearch() string {
-	width := m.width * 3 / 5
+	width := m.width * 4 / 5
 	if width < 50 {
 		width = 50
 	}
