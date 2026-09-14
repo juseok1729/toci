@@ -50,25 +50,43 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 
 ## Installation
 
-The binary is a static, pure-Go executable — no runtime dependencies beyond your `~/.oci/config`.
+The binary is a static, pure-Go executable (`CGO_ENABLED=0`) — no glibc dependency, so it runs unmodified on Oracle Linux, RHEL, Ubuntu/Debian, other distros, and WSL.
 
-### From a Release
+### 1. Install script (any Linux or macOS)
 
 ```bash
-curl -sL https://github.com/juseok1729/toci/releases/latest/download/toci-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv toci /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/main/install.sh | sh
 ```
 
-Swap the filename for your platform — available targets on the [Releases page](https://github.com/juseok1729/toci/releases/latest):
+Downloads the right release for your OS/arch, verifies it against `checksums.txt`, and installs to `/usr/local/bin` (falls back to `~/.local/bin` if that's not writable and you're not root — no `sudo` required).
 
-| Platform | Target |
-| --- | --- |
-| Linux x86_64 | `toci-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux arm64 | `toci-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS Intel | `toci-x86_64-apple-darwin.tar.gz` |
-| macOS Apple Silicon | `toci-aarch64-apple-darwin.tar.gz` |
+### 2. dnf (Oracle Linux / RHEL / Fedora)
 
-Each release also ships a `checksums.txt` for verification.
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/juseok1729/toci/setup.rpm.sh' | sudo -E bash
+sudo dnf install toci
+```
+
+### 3. apt (Debian / Ubuntu)
+
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/juseok1729/toci/setup.deb.sh' | sudo -E bash
+sudo apt install toci
+```
+
+### 4. Homebrew (macOS / Linuxbrew)
+
+```bash
+brew install juseok1729/toci/toci
+```
+
+### 5. Manual download / `go install`
+
+Download a `toci_<os>_<arch>.tar.gz` from the [Releases page](https://github.com/juseok1729/toci/releases/latest) (each release also ships a `checksums.txt`), or build from source:
+
+```bash
+go install github.com/juseok1729/toci/cmd/toci@latest
+```
 
 ### From Source
 

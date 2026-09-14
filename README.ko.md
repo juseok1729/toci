@@ -50,25 +50,43 @@
 
 ## 설치
 
-순수 Go로 작성된 정적 바이너리라 `~/.oci/config` 외에 별도 런타임 의존성이 없습니다.
+`CGO_ENABLED=0`으로 빌드한 순수 Go 정적 바이너리라 glibc 의존성이 없습니다 — Oracle Linux, RHEL, Ubuntu/Debian, 기타 배포판, WSL 어디서든 그대로 돌아갑니다.
 
-### 릴리즈에서 설치
+### 1. 설치 스크립트 (Linux/macOS 공통)
 
 ```bash
-curl -sL https://github.com/juseok1729/toci/releases/latest/download/toci-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv toci /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/juseok1729/toci/main/install.sh | sh
 ```
 
-본인 플랫폼에 맞는 파일명으로 바꾸면 됩니다 — [Releases 페이지](https://github.com/juseok1729/toci/releases/latest)에서 확인 가능한 타겟:
+OS/아키텍처를 자동 판별해 릴리즈를 받고 `checksums.txt`로 검증한 뒤 `/usr/local/bin`에 설치합니다(쓰기 권한이 없고 root도 아니면 `sudo` 없이 `~/.local/bin`으로 폴백).
 
-| 플랫폼 | 타겟 |
-| --- | --- |
-| Linux x86_64 | `toci-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux arm64 | `toci-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS Intel | `toci-x86_64-apple-darwin.tar.gz` |
-| macOS Apple Silicon | `toci-aarch64-apple-darwin.tar.gz` |
+### 2. dnf (Oracle Linux / RHEL / Fedora)
 
-각 릴리즈엔 검증용 `checksums.txt`도 같이 올라갑니다.
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/juseok1729/toci/setup.rpm.sh' | sudo -E bash
+sudo dnf install toci
+```
+
+### 3. apt (Debian / Ubuntu)
+
+```bash
+curl -1sLf 'https://dl.cloudsmith.io/public/juseok1729/toci/setup.deb.sh' | sudo -E bash
+sudo apt install toci
+```
+
+### 4. Homebrew (macOS / Linuxbrew)
+
+```bash
+brew install juseok1729/toci/toci
+```
+
+### 5. 수동 다운로드 / `go install`
+
+[Releases 페이지](https://github.com/juseok1729/toci/releases/latest)에서 `toci_<os>_<arch>.tar.gz`를 직접 받거나(검증용 `checksums.txt`도 같이 올라갑니다), 소스에서 설치:
+
+```bash
+go install github.com/juseok1729/toci/cmd/toci@latest
+```
 
 ### 소스에서 빌드
 

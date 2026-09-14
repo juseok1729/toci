@@ -1,0 +1,74 @@
+version: 2
+
+project_name: toci
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: toci
+    main: ./cmd/toci
+    binary: toci
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: toci
+    formats: [tar.gz]
+    # No {{ .Version }} — install.sh downloads a fixed filename
+    # (toci_<os>_<arch>.tar.gz) from the release's "latest" alias, which
+    # needs the asset name to stay the same across versions.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# rpm/deb packages for `dnf install`/`apt install` via a package repo (see
+# .github/workflows/release.yml's Cloudsmith push step) — bindir is /usr/bin,
+# the standard location for a distro package, not /usr/local/bin (that's
+# install.sh's target for a manual, non-package-managed install).
+nfpms:
+  - id: toci
+    package_name: toci
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    vendor: Juseok Oh
+    maintainer: "Juseok Oh (Peter) <ojkk371@gmail.com>"
+    homepage: https://github.com/juseok1729/toci
+    description: Terminal UI for Oracle Cloud Infrastructure
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+
+# Requires a pre-existing juseok1729/homebrew-toci repo and a
+# HOMEBREW_TAP_GITHUB_TOKEN secret with write access to it — the default
+# GITHUB_TOKEN can't push to a different repo. See release.yml.
+homebrew_casks:
+  - name: toci
+    repository:
+      owner: juseok1729
+      name: homebrew-toci
+    directory: Casks
+    homepage: https://github.com/juseok1729/toci
+    description: Terminal UI for Oracle Cloud Infrastructure
+    license: MIT
+    binaries:
+      - toci
+
+release:
+  github:
+    owner: juseok1729
+    name: toci

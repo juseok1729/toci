@@ -13,36 +13,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Build release binaries
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          VERSION="${GITHUB_REF_NAME}"
-
-          build() {
-            local goos="$1" goarch="$2" triple="$3"
-            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
-              go build -ldflags="-s -w -X main.version=${VERSION}" -trimpath -o dist/toci ./cmd/toci
-            tar -C dist -czf "dist/toci-${triple}.tar.gz" toci
-            rm dist/toci
-          }
-
-          build linux amd64 x86_64-unknown-linux-gnu
-          build linux arm64 aarch64-unknown-linux-gnu
-          build darwin amd64 x86_64-apple-darwin
-          build darwin arm64 aarch64-apple-darwin
-
-          (cd dist && sha256sum *.tar.gz > checksums.txt)
-
-      - name: Publish release
+      # Builds the tar.gz archives (install.sh's target) + .deb/.rpm
+      # packages, and publishes the GitHub release + Homebrew cask —
+      # see .goreleaser.yaml. HOMEBREW_TAP_GITHUB_TOKEN needs write access
+      # to juseok1729/homebrew-toci (the default GITHUB_TOKEN can't push to
+      # a different repo); the cask step is skipped if it's unset.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      # Pushes the .deb/.rpm goreleaser just built to Cloudsmith, so
+      # `apt install`/`dnf install` (via Cloudsmith's own setup script) stay
+      # current — skipped entirely until CLOUDSMITH_API_KEY is set up (see
+      # the toci Cloudsmith repo's setup instructions).
+      - name: Publish packages to Cloudsmith
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/checksums.txt \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          set -euo pipefail
+          if [ -z "${CLOUDSMITH_API_KEY:-}" ]; then
+            echo "CLOUDSMITH_API_KEY not set, skipping Cloudsmith publish"
+            exit 0
+          fi
+          pip install --quiet cloudsmith-cli
+          for f in dist/*.deb; do
+            [ -e "$f" ] || continue
+            cloudsmith push deb juseok1729/toci/any-distro/any-version "$f"
+          done
+          for f in dist/*.rpm; do
+            [ -e "$f" ] || continue
+            cloudsmith push rpm juseok1729/toci/any-distro/any-version "$f"
+          done
