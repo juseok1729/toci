@@ -94,6 +94,15 @@ xattr -d com.apple.quarantine "$(brew --prefix)/bin/toci"
 go install github.com/juseok1729/toci/cmd/toci@latest
 ```
 
+### 업그레이드
+
+| 설치 방법 | 명령어 |
+| --- | --- |
+| 설치 스크립트 | 1번의 `curl \| sh` 명령을 그대로 다시 실행 |
+| dnf | `sudo dnf upgrade toci` |
+| apt | `sudo apt update && sudo apt upgrade toci` |
+| Homebrew | `brew upgrade toci` |
+
 ### 소스에서 빌드
 
 ```bash

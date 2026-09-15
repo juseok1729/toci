@@ -94,6 +94,15 @@ Download a `toci_<os>_<arch>.tar.gz` from the [Releases page](https://github.com
 go install github.com/juseok1729/toci/cmd/toci@latest
 ```
 
+### Upgrading
+
+| Installed via | Command |
+| --- | --- |
+| Install script | Re-run the same `curl \| sh` command from method 1 |
+| dnf | `sudo dnf upgrade toci` |
+| apt | `sudo apt update && sudo apt upgrade toci` |
+| Homebrew | `brew upgrade toci` |
+
 ### From Source
 
 ```bash
