@@ -97,6 +97,10 @@ type actionResultMsg struct {
 	label string
 	msg   string
 	err   error
+	// colorize formats msg for the detail view when it's multi-line (see
+	// the actionResultMsg handler) — colorizePluginStatusText by default
+	// (nil), colorizeAddonStatusText for fetchOkeAddons' own result.
+	colorize func(string) string
 }
 
 type bastionsMsg struct {
@@ -268,6 +272,11 @@ type Model struct {
 	// while scope.DrgID is set via "i"/Enter on a DRG row.
 	drgFilterName string
 
+	// okeFilterName is the OKE analog of vcnFilterName/drgFilterName —
+	// non-empty while scope.OkeID is set via Enter on an "oke" row (see
+	// selectOkeFilter), scoping Node Pools to that cluster.
+	okeFilterName string
+
 	// history is the stack of resource+scope combinations actually visited
 	// (pushed by switchResource before each switch — see navigateBack),
 	// letting Backspace step back one view at a time (VCN -> Subnet -> DB
@@ -371,6 +380,12 @@ type Model struct {
 	// data already rides along on ExadbVmClusterRow.Nodes from List, so
 	// unlike groupByVcn this needs no extra fetch/cache.
 	exascaleNodeTree bool
+
+	// okeNodeTree is exascaleNodeTree's Node Pool analog: "g" expands each
+	// pool row into a tree with its worker nodes as children (see
+	// oke_node_tree.go) — NodePoolRow.Nodes rides along from List the same
+	// way, so this needs no extra fetch either.
+	okeNodeTree bool
 }
 
 // textInputWidth is set on every textinput.Model in this package. Without a
@@ -960,6 +975,9 @@ func (m *Model) setDisplayRows() {
 	if m.exascaleNodeTreeActive() {
 		rows = expandExascaleNodes(rows)
 	}
+	if m.okeNodeTreeActive() {
+		rows = expandOkeNodes(rows)
+	}
 	m.displayRows = rows
 	m.refreshTable(m.displayRows)
 }
@@ -1067,6 +1085,18 @@ func isDrgDependent(key string) bool {
 	return drgScopedResourceKeys[key]
 }
 
+// okeScopedResourceKeys is the OKE analog of drgScopedResourceKeys — just
+// Node Pools, since that's the only resource kind scoped by Scope.OkeID.
+var okeScopedResourceKeys = map[string]bool{
+	"oke": true, "oke-node-pool": true,
+}
+
+// isOkeDependent reports whether switching to this resource should keep an
+// active OKE filter (scope.OkeID) instead of clearing it.
+func isOkeDependent(key string) bool {
+	return okeScopedResourceKeys[key]
+}
+
 // groupingActive reports whether the "g" grouping column/sort should apply:
 // only the Subnet view, and only with no VCN filter (a filtered list is
 // already scoped to a single VCN, so grouping it would be a no-op).
@@ -1078,6 +1108,11 @@ func (m Model) groupingActive() bool {
 // only the Exascale view (see exascaleNodeTree's doc comment).
 func (m Model) exascaleNodeTreeActive() bool {
 	return m.exascaleNodeTree && m.current().Key() == "exascale"
+}
+
+// okeNodeTreeActive is exascaleNodeTreeActive's Node Pool analog.
+func (m Model) okeNodeTreeActive() bool {
+	return m.okeNodeTree && m.current().Key() == "oke-node-pool"
 }
 
 // displayColumns is m.current().Columns(), tree-decorated (see vcn_tree.go)
@@ -1092,6 +1127,8 @@ func (m *Model) displayColumns() []registry.Column {
 		cols = treeColumns(cols, treeGlyphs(m.displayRows))
 	case m.exascaleNodeTreeActive():
 		cols = exascaleTreeColumns(cols, exascaleTreeGlyphs(m.displayRows))
+	case m.okeNodeTreeActive():
+		cols = okeTreeColumns(cols, okeTreeGlyphs(m.displayRows))
 	}
 	// Subtree mode's COMPARTMENT column goes in front of whatever the
 	// above already built, last — it needs the final column set to wrap.
@@ -1134,6 +1171,17 @@ var drgIDRequiredResourceKeys = map[string]bool{
 	"drg-route-table": true, "drg-route-distribution": true,
 }
 
+// okeIDRequiredResourceKeys is drgIDRequiredResourceKeys' OKE analog, for a
+// different reason: ListNodePools' ClusterId filter is optional, not
+// mandatory (unlike DrgId for DRG Route Tables), but an unscoped call
+// would mix every node pool in the compartment together across clusters
+// with no column showing which cluster each belongs to — not a 404, just
+// a confusing result. switchResource redirects to the OKE list instead so
+// Node Pools is only ever reached already scoped to one cluster.
+var okeIDRequiredResourceKeys = map[string]bool{
+	"oke-node-pool": true,
+}
+
 // historyEntry is one previously-viewed resource+scope combination, pushed
 // by switchResource (see pushHistory) before it replaces the current one.
 // navigateBack pops these to let Backspace step back through the resources
@@ -1144,6 +1192,7 @@ type historyEntry struct {
 	scope         registry.Scope
 	vcnFilterName string
 	drgFilterName string
+	okeFilterName string
 }
 
 // pushHistory records the resource+scope combination switchResource is
@@ -1161,6 +1210,7 @@ func (m *Model) pushHistory() {
 		scope:         m.scope,
 		vcnFilterName: m.vcnFilterName,
 		drgFilterName: m.drgFilterName,
+		okeFilterName: m.okeFilterName,
 	})
 }
 
@@ -1170,6 +1220,15 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 		m.statusMsg = "select a DRG first (\"i\" or Enter on a DRG row)"
 		for i, r := range m.resources {
 			if r.Key() == "drg" {
+				idx = i
+				break
+			}
+		}
+	}
+	if okeIDRequiredResourceKeys[m.resources[idx].Key()] && m.scope.OkeID == "" {
+		m.statusMsg = "select an OKE cluster first (Enter on an oke row)"
+		for i, r := range m.resources {
+			if r.Key() == "oke" {
 				idx = i
 				break
 			}
@@ -1190,13 +1249,19 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 		m.scope.DrgID = ""
 		m.drgFilterName = ""
 	}
+	// Same idea for the OKE filter (Node Pools) — a third independent axis.
+	if !isOkeDependent(m.resources[idx].Key()) {
+		m.scope.OkeID = ""
+		m.okeFilterName = ""
+	}
 	return m.reloadCurrent()
 }
 
 // navigateBack pops the most recently pushed history entry and restores it
 // exactly as it was — unlike switchResource, it doesn't recompute
-// scope/filter names via isVcnDependent/isDrgDependent, since it's
-// replaying an already-valid past view rather than picking a new one.
+// scope/filter names via isVcnDependent/isDrgDependent/isOkeDependent,
+// since it's replaying an already-valid past view rather than picking a
+// new one.
 func (m *Model) navigateBack() tea.Cmd {
 	if len(m.history) == 0 {
 		return nil
@@ -1208,6 +1273,7 @@ func (m *Model) navigateBack() tea.Cmd {
 	m.scope = entry.scope
 	m.vcnFilterName = entry.vcnFilterName
 	m.drgFilterName = entry.drgFilterName
+	m.okeFilterName = entry.okeFilterName
 	return m.reloadCurrent()
 }
 
@@ -1299,6 +1365,55 @@ func (m *Model) openScopedResourceSearch(title string, keys []string) {
 	m.pickerLastClickIndex = pickerNoClick
 }
 
+// okeMenuItems is the 2-item menu Enter on an "oke" row (selectOkeFilter)
+// floats — OCI's own OKE cluster detail page layout (Node Pools, Add-ons).
+// Node Pools is a real resource kind (switchResource, via confirmPicker's
+// ordinary pickerResource lookup); Add-ons isn't a browsable table, just a
+// one-shot status fetch — confirmPicker special-cases its key before that
+// lookup (see fetchOkeAddons).
+var okeMenuItems = []pickerItem{
+	{key: "oke-node-pool", label: "Node Pools"},
+	{key: "oke-addons", label: "Add-ons"},
+}
+
+// openOkeResourceSearch is openVcnResourceSearch/openDrgResourceSearch's
+// OKE analog, triggered by Enter on an "oke" row (selectOkeFilter) — but
+// unlike those, its items aren't looked up in m.resources (openScopedResourceSearch
+// requires that), since "Add-ons" isn't a registered resource kind at all.
+// row is remembered as m.pendingRow so confirmPicker's "oke-addons" case
+// knows which cluster to fetch add-ons for.
+func (m *Model) openOkeResourceSearch(row registry.Row) {
+	currentKey := m.current().Key()
+	items := make([]pickerItem, len(okeMenuItems))
+	for i, it := range okeMenuItems {
+		it.isCurrent = it.key == currentKey
+		items[i] = it
+	}
+
+	p := newPicker(pickerResource, "OKE Resources", nil)
+	p.treeFilter = func(query string) []pickerItem {
+		if query == "" {
+			return items
+		}
+		labels := make([]string, len(items))
+		for i, it := range items {
+			labels[i] = it.label
+		}
+		kept := make([]pickerItem, 0, len(items))
+		for _, mm := range fuzzy.Find(query, labels) {
+			kept = append(kept, items[mm.Index])
+		}
+		return kept
+	}
+	p.refilter()
+
+	m.picker = p
+	m.mode = modePicker
+	m.pickerReturnMode = modeTable
+	m.pickerLastClickIndex = pickerNoClick
+	m.pendingRow = row
+}
+
 // selectVcnFilter scopes every VCN-dependent resource (see
 // isVcnDependent) to one VCN — triggered by "i" on a VCN row, or by Enter —
 // then opens the VCN-scoped resource picker (openVcnResourceSearch) so the
@@ -1332,6 +1447,20 @@ func (m *Model) selectDrgFilter(id, name, compartmentID string) {
 	m.scope.DrgID = id
 	m.drgFilterName = name
 	m.openDrgResourceSearch()
+}
+
+// selectOkeFilter is selectVcnFilter's OKE analog — triggered by Enter on
+// an "oke" row, scopes Node Pools to this cluster. Takes the whole row
+// (rather than selectVcnFilter/selectDrgFilter's separate id/name/
+// compartmentID) since openOkeResourceSearch needs it as m.pendingRow too,
+// for the "Add-ons" menu item. See selectVcnFilter's compartmentID doc.
+func (m *Model) selectOkeFilter(row registry.Row) {
+	if row.CompartmentID != "" {
+		m.scope.CompartmentID = row.CompartmentID
+	}
+	m.scope.OkeID = row.ID
+	m.okeFilterName = row.Name
+	m.openOkeResourceSearch(row)
 }
 
 // openResourceSearch opens the ":" centered fuzzy picker over every
@@ -1393,6 +1522,24 @@ func (m *Model) exitDrg() tea.Cmd {
 	}
 	m.scope.DrgID = ""
 	m.drgFilterName = ""
+	return m.switchResource(idx)
+}
+
+// exitOke is exitVcn's OKE analog — clears the OKE scope and returns to
+// the OKE cluster list.
+func (m *Model) exitOke() tea.Cmd {
+	idx := -1
+	for i, r := range m.resources {
+		if r.Key() == "oke" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	m.scope.OkeID = ""
+	m.okeFilterName = ""
 	return m.switchResource(idx)
 }
 
@@ -1620,11 +1767,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.msg != "" {
-			// Multi-line results (e.g. a plugin-status list) don't fit the
-			// one-line status bar, which clips to terminal width — show
-			// them in the scrollable detail view instead.
+			// Multi-line results (e.g. a plugin-status or add-on list)
+			// don't fit the one-line status bar, which clips to terminal
+			// width — show them in the scrollable detail view instead.
+			colorize := msg.colorize
+			if colorize == nil {
+				colorize = colorizePluginStatusText
+			}
 			m.mode = modeDetail
-			m.detail.SetContent(msg.label + "\n\n" + colorizePluginStatusText(msg.msg))
+			m.detail.SetContent(msg.label + "\n\n" + colorize(msg.msg))
 			m.detail.GotoTop()
 			m.detailExport = nil
 			return m, nil
@@ -2029,6 +2180,14 @@ func (m Model) confirmPicker() (tea.Model, tea.Cmd) {
 		}
 		return m, m.continueSSHSetup()
 	case pickerResource:
+		// "Add-ons" (openOkeResourceSearch) isn't a registered resource
+		// kind at all — a one-shot status fetch, not a browsable table —
+		// so it's checked before the ordinary key lookup below, against
+		// m.pendingRow (the OKE cluster row the menu was opened for).
+		if item.key == "oke-addons" {
+			m.mode = modeTable
+			return m, m.fetchOkeAddons(m.pendingRow)
+		}
 		for i, res := range m.resources {
 			if res.Key() == item.key {
 				return m, m.switchResource(i)
@@ -2424,6 +2583,16 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.setDisplayRows()
 			return m, nil
+
+		case "oke-node-pool":
+			m.okeNodeTree = !m.okeNodeTree
+			if m.okeNodeTree {
+				m.statusMsg = "show nodes: on"
+			} else {
+				m.statusMsg = "show nodes: off"
+			}
+			m.setDisplayRows()
+			return m, nil
 		}
 		return m, nil
 
@@ -2435,6 +2604,9 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.exascaleNodeTreeActive() {
 			rows = filterOutExascaleNodes(rows)
+		}
+		if m.okeNodeTreeActive() {
+			rows = filterOutOkeNodes(rows)
 		}
 		if m.subtreeActive() {
 			rows = filterOutSubtreePlaceholders(rows)
@@ -2515,17 +2687,20 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "i":
 		key := m.current().Key()
-		if key != "vcn" && key != "drg" {
+		if key != "vcn" && key != "drg" && key != "oke" {
 			return m, nil
 		}
 		row, ok := m.selected()
 		if !ok {
 			return m, nil
 		}
-		if key == "vcn" {
+		switch key {
+		case "vcn":
 			m.selectVcnFilter(row.ID, row.Name, row.CompartmentID)
-		} else {
+		case "drg":
 			m.selectDrgFilter(row.ID, row.Name, row.CompartmentID)
+		case "oke":
+			m.selectOkeFilter(row)
 		}
 		return m, nil
 
@@ -2642,6 +2817,8 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectVcnFilter(row.ID, row.Name, row.CompartmentID)
 		case "drg":
 			m.selectDrgFilter(row.ID, row.Name, row.CompartmentID)
+		case "oke":
+			m.selectOkeFilter(row)
 		default:
 			m.openActionPicker(row)
 		}
@@ -2670,15 +2847,19 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if len(m.history) > 0 {
 			return m, m.navigateBack()
 		}
-		// history is empty (nothing to step back through) but a VCN/DRG
-		// scope is still active — e.g. Enter on a VCN row set it, then Esc
-		// cancelled the picker before switchResource ever pushed anything.
-		// Fall back to exitVcn/exitDrg's direct jump so it isn't stuck on.
+		// history is empty (nothing to step back through) but a VCN/DRG/
+		// OKE scope is still active — e.g. Enter on a VCN row set it, then
+		// Esc cancelled the picker before switchResource ever pushed
+		// anything. Fall back to exitVcn/exitDrg/exitOke's direct jump so
+		// it isn't stuck on.
 		if m.scope.VcnID != "" {
 			return m, m.exitVcn()
 		}
 		if m.scope.DrgID != "" {
 			return m, m.exitDrg()
+		}
+		if m.scope.OkeID != "" {
+			return m, m.exitOke()
 		}
 		return m, nil
 	}
@@ -2758,6 +2939,9 @@ func (m Model) viewContent() string {
 	}
 	if m.drgFilterName != "" {
 		compartment += " › " + m.drgFilterName
+	}
+	if m.okeFilterName != "" {
+		compartment += " › " + m.okeFilterName
 	}
 	b.WriteString(pathStyle.Render("  Compartment: "))
 	b.WriteString(headerValueStyle.Render(compartment))
@@ -3410,6 +3594,13 @@ func (m Model) helpEntries() []helpEntry {
 			add("g", "", "show nodes: off")
 		}
 	}
+	if m.current().Key() == "oke-node-pool" {
+		if m.okeNodeTree {
+			add("g", "", "show nodes: on")
+		} else {
+			add("g", "", "show nodes: off")
+		}
+	}
 	add("e", "", "export csv")
 	if m.vcnFilterName != "" {
 		add("m", "", "export diagram")
@@ -3436,6 +3627,9 @@ func (m Model) helpEntries() []helpEntry {
 	}
 	if m.current().Key() == "drg" {
 		add("⤶ / i", "", "filter by this DRG")
+	}
+	if m.current().Key() == "oke" {
+		add("⤶ / i", "", "node pools / add-ons")
 	}
 	if key := m.current().Key(); key == "security-list" || key == "route-table" || key == "nsg" || key == "drg-route-table" {
 		add("v", "", "view rules")

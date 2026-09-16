@@ -31,9 +31,9 @@
 
 - **리소스 검색** — `:`를 누르면 모든 리소스 종류를 퍼지 검색하는 2단 창(목록 + 설명)이 뜨고, 바로 진입할 수 있습니다.
 - **컴파트먼트 전환** — `c`를 누르면 퍼지 컴파트먼트 트리 피커가 뜹니다. Compartments 자체는 정보 조회 전용(`Enter`/`d`로 상세 보기)입니다.
-- **VCN/DRG 스코프 피커** — VCN 행에서 `Enter`(또는 `i`)를 누르면 그 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커가 뜨고, DRG 행에서는 그 DRG의 Attachment/Route Table/Route Distribution만 모은 피커가 뜹니다.
+- **VCN/DRG/OKE 스코프 피커** — VCN 행에서 `Enter`(또는 `i`)를 누르면 그 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커가 뜨고, DRG 행에서는 그 DRG의 Attachment/Route Table/Route Distribution만 모은 피커가, OKE 행에서는 Node Pools(`g`로 노드풀마다 워커 노드 트리 펼치기)/Add-ons(설치된 애드온과 상태) 메뉴가 뜹니다.
 - **VCN 스코프 필터링** — VCN을 하나 고르면 그 VCN에 속한 모든 리소스(Subnet, Route Table, Security List, NSG, Instance, Load Balancer, Internet/NAT/Service Gateway, OKE Cluster, DB System, Autonomous DB, Exadata VM Cluster)가 자동으로 그 VCN 기준으로 필터링됩니다.
-- **리소스 24종**: Compute, Network, Gateways, Storage, Containers, Database 카테고리로 나뉘어 있습니다 — 전체 목록은 `:` 검색에서 확인 가능합니다.
+- **리소스 25종**: Compute, Network, Gateways, Storage, Containers, Database 카테고리로 나뉘어 있습니다 — 전체 목록은 `:` 검색에서 확인 가능합니다.
 - **최근 생성된 리소스** — 홈 화면 바로가기(`:` 검색에도 있음)로, 지난 3일 내 생성된 모든 리소스를 종류 상관없이 최신순으로 모아서 보여줍니다. 생성 기준만 추적합니다 — OCI list API에는 최종 수정 시각이 없어서 기존 리소스의 수정 사항은 잡을 수 없습니다.
 - **Instance 테이블** — 실시간 CPU%/MEM%(OCI Monitoring), OCPU/메모리 스펙, OS 이미지 버전, 서브넷, Public/Private IP, 색상으로 표시되는 STATE 컬럼(모든 리소스 종류에서 정상/실패/주의 상태를 초록/빨강/노랑 텍스트로 표시 — [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md) 참고).
 - **규칙 뷰어** — Security List/Route Table/NSG/DRG Route Table 행에서 `v`를 누르면 ingress/egress 또는 route 규칙을 화면 하단에 표 형태로 띄워줍니다(중첩된 YAML 대신).
@@ -135,7 +135,7 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 | 키 | 동작 |
 | --- | --- |
 | `j` / `k` (또는 방향키) | 위/아래 이동 |
-| `Enter` | Compartment: 상세(YAML) 보기 · VCN: 이 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커, `i`와 동일 · DRG: 이 DRG의 Attachment/Route Table/Route Distribution만 모은 피커 · Instance(`--write` 필요): 액션 메뉴(start/stop, 타이핑 확인 필요) 플로팅 · 그 외: 동작 없음 |
+| `Enter` | Compartment: 상세(YAML) 보기 · VCN: 이 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커, `i`와 동일 · DRG: 이 DRG의 Attachment/Route Table/Route Distribution만 모은 피커 · OKE: Node Pools/Add-ons 메뉴 · Instance(`--write` 필요): 액션 메뉴(start/stop, 타이핑 확인 필요) 플로팅 · 그 외: 동작 없음 |
 | `d` | 선택한 행의 상세(YAML) 보기 — 모든 리소스 종류 |
 | `Esc` | 열려있는 창/뷰 닫기 (상세, 리소스맵, 규칙 뷰, `:` 검색 등) |
 | `Backspace` | 뒤로가기: 필터 해제 후, 실제로 봤던 리소스를 한 단계씩 되돌아감 (예: VCN → Subnet → DB System → Subnet → VCN) |
@@ -147,7 +147,7 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 | `c` | 컴파트먼트 전환 (퍼지 트리 피커) |
 | `C` | 서브트리 모드 토글 (현재 리소스를 모든 하위 컴파트먼트까지 확장 조회) |
 | `e` | 현재 화면을 CSV로 export (UTF-8 BOM 포함) |
-| `i` | *(VCN 또는 DRG 행에서)* 그 행에서의 `Enter`와 동일 |
+| `i` | *(VCN, DRG, 또는 OKE 행에서)* 그 행에서의 `Enter`와 동일 |
 | `v` | *(Security List/Route Table/NSG/DRG Route Table 행에서)* 그 규칙(ingress/egress 또는 route)을 화면 하단에 표로 띄우기 |
 | `m` | *(VCN 필터가 걸려있을 때)* 그 VCN의 구성도를 Mermaid로 export |
 | `M` | *(VCN 필터가 걸려있을 때)* 그 VCN의 리소스 맵(서브넷/라우팅 테이블/네트워크 연결) 보기 |

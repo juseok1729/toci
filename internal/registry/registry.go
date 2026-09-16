@@ -26,6 +26,7 @@ func All(f *clients.Factory) []Resource {
 		NewFileSystemResource(f),
 		NewBucketResource(f),
 		NewOkeResource(f),
+		NewNodePoolResource(f),
 		NewDbSystemResource(f),
 		NewAutonomousDatabaseResource(f),
 		NewCloudVmClusterResource(f),

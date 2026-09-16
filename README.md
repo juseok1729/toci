@@ -31,9 +31,9 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 
 - **Resource search** — press `:` for a two-pane fuzzy picker (list + description) over every resource kind, jump straight to one.
 - **Compartment switching** — press `c` for a fuzzy compartment tree picker; Compartments themselves are an info-only view (`Enter`/`d` shows detail).
-- **VCN/DRG-scoped pickers** — `Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions.
+- **VCN/DRG/OKE-scoped pickers** — `Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions; an OKE row floats a menu for its Node Pools (`g` expands each pool into a tree of its worker nodes) or Add-ons (installed add-ons and their status).
 - **VCN-scoped filtering** — pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, Internet/NAT/Service Gateways, OKE Clusters, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
-- **24 resource kinds** across Compute, Network, Gateways, Storage, Containers, and Database — see the `:` search for the full, categorized list.
+- **25 resource kinds** across Compute, Network, Gateways, Storage, Containers, and Database — see the `:` search for the full, categorized list.
 - **Recently Created** — a home-screen shortcut (also in the `:` search) listing every resource created in the last 3 days, across every kind, newest first. Creation-only: OCI's list APIs don't expose a last-modified timestamp, so this can't track edits to existing resources.
 - **Instance table** with live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, OS image version, subnet, public/private IP, and a colored STATE column (every resource kind gets green/red/yellow text for healthy/failed/needs-attention states — see [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md)).
 - **Rules viewer** — `v` on a Security List/Route Table/NSG/DRG Route Table row floats its ingress/egress or route rules as a table over the bottom of the screen, instead of raw nested YAML.
@@ -135,7 +135,7 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrow keys) | Move up/down |
-| `Enter` | Compartment: view detail (YAML) · VCN: float a picker over its Subnets/Route Tables/Security Lists/Gateways, same as `i` · DRG: float a picker over its Attachments/Route Tables/Route Distributions · Instance (`--write` only): float the action menu (start/stop, with a type-to-confirm prompt) · everything else: no-op |
+| `Enter` | Compartment: view detail (YAML) · VCN: float a picker over its Subnets/Route Tables/Security Lists/Gateways, same as `i` · DRG: float a picker over its Attachments/Route Tables/Route Distributions · OKE: float a menu for its Node Pools or Add-ons · Instance (`--write` only): float the action menu (start/stop, with a type-to-confirm prompt) · everything else: no-op |
 | `d` | View detail (YAML) for the selected row, any resource kind |
 | `Esc` | Close whatever window/view is open (detail, resource map, rules view, the `:` search, ...) |
 | `Backspace` | Go back: clear the filter, then step back through the resources you've actually visited one at a time (e.g. VCN → Subnet → DB System → Subnet → VCN) |
@@ -147,7 +147,7 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 | `c` | Switch compartment (fuzzy tree picker) |
 | `C` | Toggle subtree mode (fan the current resource out across every sub-compartment) |
 | `e` | Export the current view to CSV (UTF-8 BOM) |
-| `i` | *(on a VCN or DRG row)* Same as `Enter` on that row |
+| `i` | *(on a VCN, DRG, or OKE row)* Same as `Enter` on that row |
 | `v` | *(on a Security List/Route Table/NSG/DRG Route Table row)* Float its rules (ingress/egress or route rules) as a table over the bottom of the screen |
 | `m` | *(with a VCN filter active)* Export a Mermaid diagram of the VCN's topology |
 | `M` | *(with a VCN filter active)* View the VCN's resource map (Subnets/Route Tables/Network Connections) |

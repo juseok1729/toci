@@ -185,6 +185,28 @@ func colorizePluginStatusText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
+// colorizeAddonStatusText colors each "Name: State" line of an OKE
+// Add-ons status view (see fetchOkeAddons) the same tri-color way
+// colorizeState does for a table's own STATE column — unlike
+// colorizePluginStatusText's RUNNING/STOPPED-specific check, an add-on's
+// lifecycle state (Active/Failed/Needs Attention/...) needs the general
+// classifier those share. A state matching none of the three tiers (a
+// transitional one like Creating/Updating) is left uncolored.
+func colorizeAddonStatusText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		idx := strings.LastIndex(line, ": ")
+		if idx < 0 {
+			continue
+		}
+		status := line[idx+2:]
+		if style, ok := stateStyleFor(status, false); ok {
+			lines[i] = line[:idx+2] + style.Render(status)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // colorizeState highlights a named column (e.g. "STATE", or DB System's
 // "NODE") of an already-rendered resource table (the string bubbles'
 // table.Model.View() returns) — every resource kind, not just Instance,
