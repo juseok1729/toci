@@ -2090,12 +2090,20 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// don't map onto pickerItemAt's flat-list math (scrolling window,
 	// variable indentation). Add if this picker turns out to need mouse
 	// support in practice; keyboard nav covers it for now.
-	if m.picker.kind == pickerCompartment {
+	//
+	// pickerAction floats centered (overlayCenter) the same way, unlike
+	// every other renderPicker()-based kind below (still drawn inline as
+	// the main panel at a fixed position) — rather than duplicate
+	// pickerCompartment's boxX/boxY math for it, mouse clicks are unsupported
+	// here too; it's a 1-2 item list (start/stop), keyboard-only is fine,
+	// and a wrong click target on a write action is the wrong place to
+	// find that out.
+	if m.picker.kind == pickerCompartment || m.picker.kind == pickerAction {
 		return m, nil
 	}
 
 	var box string
-	var boxX, boxY, itemsTop int
+	var boxX, boxY, itemsTop, scrollStart int
 	if m.picker.kind == pickerResource {
 		// Overlaid centered over the table — see View()'s overlayCenter
 		// call. boxX centers on the combined (list + description panes)
@@ -2108,6 +2116,11 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		box = m.renderResourceSearchList(m.resourceSearchListWidth())
 		boxY = m.resourceSearchY()
 		itemsTop = pickerResourceItemsTop
+		// The list scrolls once it's taller than resourceSearchVisibleRows
+		// (see renderResourceSearchList) — pickerItemAt's row index is
+		// relative to what's actually drawn, so it needs this same offset
+		// added back to land on the right item in m.picker.filtered.
+		scrollStart, _ = resourceSearchScrollWindow(m.picker.cursor, len(m.picker.filtered), resourceSearchVisibleRows(m))
 	} else {
 		// Drawn inline as the main panel, itself preceded by the header
 		// block's 5 lines + 1 blank line and the "  " left margin — see
@@ -2118,7 +2131,11 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	i, ok := pickerItemAt(click.X, click.Y, boxX, boxY, itemsTop, box)
-	if !ok || i >= len(m.picker.filtered) {
+	if !ok {
+		return m, nil
+	}
+	i += scrollStart
+	if i >= len(m.picker.filtered) {
 		return m, nil
 	}
 	if m.picker.kind == pickerResource {
@@ -2965,30 +2982,97 @@ func (m Model) renderPicker() string {
 	return boxStyle.Render(b.String())
 }
 
-// resourceSearchY is the "f" search box's vertical position — biased 1/3 of
+// resourceSearchVisibleRows caps how many rows (category headers included)
+// the ":" search list draws before it scrolls instead of growing further —
+// height-only, deliberately not a function of the picker's own item count,
+// so growth in the resource count itself never changes it (see
+// resourceSearchY's splash case and renderResourceSearchList's windowing).
+func resourceSearchVisibleRows(m Model) int {
+	// -4: the box's own chrome (pickerResourceItemsTop's input+divider
+	// lines, plus the top/bottom border) that isn't an item row; -4 more
+	// as a margin so the box doesn't end up touching the screen's own top
+	// or bottom edge.
+	rows := m.height - pickerResourceItemsTop - 2 - 4
+	if rows < 10 {
+		rows = 10
+	}
+	if rows > 34 {
+		rows = 34
+	}
+	return rows
+}
+
+// resourceSearchFixedItemRows is the ":" search box's fixed item-row
+// count — the full, unfiltered pool's size (via the picker's own
+// treeFilter), capped by resourceSearchVisibleRows the same way the
+// scrolling window is. renderResourceSearchList pads the box out to this
+// many rows with blank lines whenever a query narrows m.picker.filtered to
+// fewer than this, so the box's height (and, on the home screen, its
+// position — nothing below it moves either) stays constant regardless of
+// how many items currently match, the same way LazyVim's own file picker
+// doesn't shrink as a search narrows its results.
+func resourceSearchFixedItemRows(m Model) int {
+	total := len(m.picker.treeFilter(""))
+	if cap := resourceSearchVisibleRows(m); total > cap {
+		total = cap
+	}
+	return total
+}
+
+// resourceSearchScrollWindow is the cursor-follows-scroll windowing math
+// renderResourceSearchList and updatePickerMouse's click handling both need
+// to agree on (same idea as compartmentPickerVisibleRows' own start/end),
+// so a click always lands on the row it's actually drawn over.
+func resourceSearchScrollWindow(cursor, total, visible int) (start, end int) {
+	if cursor >= visible {
+		start = cursor - visible + 1
+	}
+	end = start + visible
+	if end > total {
+		end = total
+	}
+	return start, end
+}
+
+// resourceSearchSplashAnchorItems is a frozen reference item count for
+// positioning the home-screen search box's top edge — deliberately NOT the
+// picker's live item count (registry.All() has grown several times over
+// this project's life, each growth silently sliding the box's top edge
+// further up, since a taller box left less spare room above it). Picked to
+// match the full resource list's size at the time this was frozen, so
+// freezing it didn't itself move the box; from here on the top stays
+// exactly here no matter how many more resource kinds get registered —
+// only the rendered height grows downward (capped by
+// resourceSearchVisibleRows, then scrolling — see renderResourceSearchList).
+const resourceSearchSplashAnchorItems = 24
+
+// resourceSearchY is the ":" search box's vertical position — biased 1/4 of
 // the way down when it's floating over the home screen (pickerReturnMode ==
-// modeSplash, see viewContent), same as every other centered overlay, but
-// pushed further down when it's floating over the ordinary header/table
-// instead, so the header block stays visible above it rather than sitting
-// under the box's own top-biased position. Shared by viewContent
-// (rendering) and updatePickerMouse (click math) so they never disagree on
-// where the box actually is.
-//
-// Anchored to the box's maximum possible height (every item, no filter —
-// via the picker's own treeFilter, so this works the same whether it's the
-// full "f" search or a narrower one like openVcnResourceSearch) rather than
-// however tall it happens to be right now: narrowing the list with a query
-// should only shorten the box from the bottom, not slide the whole thing
-// (top edge included) down as it shrinks.
+// modeSplash, see viewContent) to sit close to the top, LazyVim's own
+// file-picker style, but pushed further down when it's floating over the
+// ordinary header/table instead, so the header block stays visible above
+// it rather than sitting under the box's own top-biased position. Shared
+// by viewContent (rendering) and updatePickerMouse (click math) so they
+// never disagree on where the box actually is.
 func (m Model) resourceSearchY() int {
 	maxItems := len(m.picker.treeFilter(""))
 	maxLines := maxItems + pickerResourceItemsTop + 2 // +2: the box's own top/bottom border rows
 	spare := m.height - maxLines
 	if m.pickerReturnMode == modeSplash {
-		return spare / 3
+		anchorLines := resourceSearchSplashAnchorItems + pickerResourceItemsTop + 2
+		anchorSpare := m.height - anchorLines
+		return anchorSpare / 4
 	}
+	// Anchored to the box's maximum possible height (every item, no filter
+	// — via the picker's own treeFilter, so this works the same whether
+	// it's the full ":" search or a narrower one like
+	// openVcnResourceSearch) rather than a live, filtered count: the box
+	// itself no longer shrinks as a query narrows it either (see
+	// renderResourceSearchList's own padding), so this is also just what
+	// it's actually rendered at, not a "worst case" estimate.
+	//
 	// A short picker (e.g. openVcnResourceSearch's ~4 items) has far more
-	// spare room than the full "f" search's ~20+ does, so the same
+	// spare room than the full ":" search's ~20+ does, so the same
 	// fraction of it pushes a small box much further down in absolute
 	// terms than it does the tall one — a smaller fraction keeps it nearer
 	// the middle instead of down by the table's bottom edge.
@@ -3071,19 +3155,19 @@ func (m Model) renderResourceSearchList(width int) string {
 	// background this light.
 	searchSelStyle := selStyle.Background(lipgloss.Color("#f6cbcb")).Foreground(lipgloss.Color("16"))
 
-	var b strings.Builder
-	b.WriteString("> ")
-	b.WriteString(m.picker.input.View())
-	b.WriteString("\n")
-	// width-4, not width-2: width is the box's outer width, and the
-	// divider sits inside both the border (1 col each side) and the
-	// style's own padding (1 col each side) — see tableBoxOverhead for
-	// the same accounting elsewhere. Off by those 2 extra columns, this
-	// line was wide enough to make lipgloss soft-wrap it onto a second
-	// row instead of just filling the divider's own row.
-	b.WriteString(splashMenuKeyStyle.Render(strings.Repeat("─", width-4)))
-	b.WriteString("\n")
-	for i, it := range m.picker.filtered {
+	itemLines := []string{
+		"> " + m.picker.input.View(),
+		// width-4, not width-2: width is the box's outer width, and the
+		// divider sits inside both the border (1 col each side) and the
+		// style's own padding (1 col each side) — see tableBoxOverhead for
+		// the same accounting elsewhere. Off by those 2 extra columns,
+		// this line was wide enough to make lipgloss soft-wrap it onto a
+		// second row instead of just filling the divider's own row.
+		splashMenuKeyStyle.Render(strings.Repeat("─", width-4)),
+	}
+	start, end := resourceSearchScrollWindow(m.picker.cursor, len(m.picker.filtered), resourceSearchVisibleRows(m))
+	for i := start; i < end; i++ {
+		it := m.picker.filtered[i]
 		// A category header (resourcePickerItems) has no key — nothing to
 		// select, so it's dimmed via titleStyle instead of plain text, but
 		// only when it isn't the highlighted row (searchSelStyle's own
@@ -3112,22 +3196,29 @@ func (m Model) renderResourceSearchList(width int) string {
 		default:
 			line = "  " + text
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		itemLines = append(itemLines, line)
 	}
 	if len(m.picker.filtered) == 0 {
-		b.WriteString(statusStyle.Render("  (no matches)"))
+		itemLines = append(itemLines, statusStyle.Render("  (no matches)"))
+	}
+	// Padded with blank rows up to the box's fixed height (LazyVim's own
+	// file picker does the same) rather than shrinking to fit however many
+	// items currently match — a narrowing query used to make the whole box
+	// (and, on the home screen, everything below it) visibly jump upward
+	// with every keystroke.
+	for target := resourceSearchFixedItemRows(m); len(itemLines)-pickerResourceItemsTop < target; {
+		itemLines = append(itemLines, "")
 	}
 
 	// Border color matches splashLogoStyle (the home screen's logo/corner
 	// wordmark red) rather than the app's usual green ociBorder — this box
-	// is the "f" search specifically, not every bordered box.
+	// is the ":" search specifically, not every bordered box.
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(splashLogoStyle.GetForeground()).
 		Width(width).
 		Padding(0, 1)
-	lines := strings.Split(style.Render(strings.TrimRight(b.String(), "\n")), "\n")
+	lines := strings.Split(style.Render(strings.Join(itemLines, "\n")), "\n")
 
 	title := titleLogoStyle.Render(" " + m.picker.title + " ")
 	topWidth := ansi.StringWidth(lines[0])

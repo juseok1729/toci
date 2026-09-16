@@ -1,6 +1,6 @@
 package app
 
-// resourceDescriptions is the "f" resource search's preview-pane copy, one
+// resourceDescriptions is the ":" resource search's preview-pane copy, one
 // paragraph per registry.Resource.Key() — plain OCI documentation-style
 // descriptions, not tied to anything fetched at runtime. Keyed by Key()
 // rather than a Resource method so adding one doesn't touch every resource

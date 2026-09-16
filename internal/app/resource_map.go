@@ -72,7 +72,7 @@ const (
 
 // resourceMapOverlaySize is the "M" resource map's floating box size — a
 // bottom-of-screen overlay over the current table (like the "space"
-// shortcuts popup or "f" resource search), not a full-page modeDetail
+// shortcuts popup or ":" resource search), not a full-page modeDetail
 // replacement, so the table underneath stays visible around it. Returns
 // the *content* width/height to give m.detail — the wrapping border in
 // renderResourceMapOverlayBox sizes itself to that content rather than

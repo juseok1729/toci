@@ -32,7 +32,7 @@ type pickerItem struct {
 }
 
 // picker is a fuzzy-filtered list overlay reused for the region switcher,
-// the action menu, the bastion picker, the "f" resource search, and the
+// the action menu, the bastion picker, the ":" resource search, and the
 // "c" compartment tree picker.
 type picker struct {
 	kind     pickerKind
@@ -54,7 +54,7 @@ func newPicker(kind pickerKind, title string, items []pickerItem) picker {
 	ti := textinput.New()
 	if kind == pickerResource {
 		ti.Placeholder = "Select the resource you want to view..."
-		// The "f" search's own cursor color — every other picker (and the
+		// The ":" search's own cursor color — every other picker (and the
 		// resource table's own row cursor, an unrelated selStyle highlight)
 		// keeps the textinput package's default.
 		styles := ti.Styles()
