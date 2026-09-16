@@ -33,7 +33,7 @@ var splashLogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#fc6464")).
 // them.
 var splashMenuLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#fc6464"))
 
-// splashMenuKeyStyle colors the home screen's menu keys ("f", "i", ...) — a
+// splashMenuKeyStyle colors the home screen's menu keys (":", "i", ...) — a
 // pale yellow (228), lighter than spinnerStyle's saturated gold (220) below,
 // which read as too dark/heavy for a key that's on screen constantly rather
 // than briefly like the loading spinner.
@@ -98,7 +98,7 @@ type splashMenuItem struct {
 }
 
 // splashResourceAction jumps straight to a resource kind (by registry.Key())
-// without going through the "f" search — the home screen's fast path for
+// without going through the ":" search — the home screen's fast path for
 // the handful of resources common enough to deserve their own key.
 func splashResourceAction(key string) func(m *Model) tea.Cmd {
 	return func(m *Model) tea.Cmd {
@@ -113,11 +113,11 @@ func splashResourceAction(key string) func(m *Model) tea.Cmd {
 }
 
 // splashMenuItems is the home screen's menu, top to bottom. "Find Resource"
-// (the fuzzy "f" search) covers every resource kind; the rest are one-key
+// (the fuzzy ":" search) covers every resource kind; the rest are one-key
 // shortcuts to the ones used often enough to skip the search for. Add more
 // here as needed — same shape as resourceCategories in resource_picker.go.
 var splashMenuItems = []splashMenuItem{
-	{"", "Find Resource", "f", func(m *Model) tea.Cmd {
+	{"", "Find Resource", ":", func(m *Model) tea.Cmd {
 		m.openResourceSearch()
 		// Esc (or picking nothing) should close back onto the home menu,
 		// not drop into the table underneath — there's no resource loaded
@@ -125,7 +125,7 @@ var splashMenuItems = []splashMenuItem{
 		m.pickerReturnMode = modeSplash
 		return nil
 	}}, // nf-fa-search
-	{"", "Recently Created", "r", splashResourceAction("recent")}, // nf-fa-history
+	{"", "Recently Created", "r", splashResourceAction("recent")},      // nf-fa-history
 	{"", "Instances", "i", splashResourceAction("instance")},           // nf-fa-server
 	{"", "VCNs", "v", splashResourceAction("vcn")},                     // nf-fa-sitemap
 	{"", "OKE Clusters", "k", splashResourceAction("oke")},             // nf-fa-cubes

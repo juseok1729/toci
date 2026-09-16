@@ -93,16 +93,16 @@ func TestSplashTickStopsOnceDataReady(t *testing.T) {
 func TestSplashMenuKeysDispatch(t *testing.T) {
 	m := Model{mode: modeSplash, resources: registry.All(nil)}
 
-	// "f" opens the resource search, floating over the home menu itself
+	// ":" opens the resource search, floating over the home menu itself
 	// (pickerReturnMode = modeSplash) rather than the ordinary table/header
 	// chrome the same picker floats over when opened from modeTable.
-	mi, _ := m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: ':', Text: ":"})
 	m2 := mi.(Model)
 	if m2.mode != modePicker || m2.picker.kind != pickerResource {
-		t.Errorf("pressing %q on the home screen: mode = %v, picker.kind = %v, want modePicker/pickerResource", "f", m2.mode, m2.picker.kind)
+		t.Errorf("pressing %q on the home screen: mode = %v, picker.kind = %v, want modePicker/pickerResource", ":", m2.mode, m2.picker.kind)
 	}
 	if m2.pickerReturnMode != modeSplash {
-		t.Errorf("pickerReturnMode = %v after pressing %q on the home screen, want modeSplash", m2.pickerReturnMode, "f")
+		t.Errorf("pickerReturnMode = %v after pressing %q on the home screen, want modeSplash", m2.pickerReturnMode, ":")
 	}
 	// Not asserting that any particular piece of the splash background
 	// (logo, menu text, ...) is visually un-covered by the search box: the
@@ -143,6 +143,34 @@ func TestSplashMenuKeysDispatch(t *testing.T) {
 	m3 := mi.(Model)
 	if m3.mode != modeTable || m3.current().Key() != "instance" {
 		t.Errorf("pressing %q on the home screen: mode = %v, resource = %v, want modeTable/instance", "i", m3.mode, m3.current().Key())
+	}
+}
+
+// TestSplashDoubleSpaceOpensResourceSearch: the home screen gets the same
+// double-tap-space idiom as modeTable (TestDoubleSpaceOpensResourceSearch)
+// — space shows the shortcuts popup, space again opens the resource search.
+func TestSplashDoubleSpaceOpensResourceSearch(t *testing.T) {
+	m := Model{mode: modeSplash, resources: registry.All(nil), width: 100, height: 30}
+
+	mi, _ := m.Update(spaceMsg)
+	m2 := mi.(Model)
+	if !m2.showHelp {
+		t.Fatalf("first space press should open the shortcuts popup, showHelp = %v", m2.showHelp)
+	}
+	if out := ansi.Strip(m2.viewContent()); !strings.Contains(out, "search resources") {
+		t.Errorf("shortcuts popup should mention searching resources, got:\n%s", out)
+	}
+
+	mi, _ = m2.Update(spaceMsg)
+	m3 := mi.(Model)
+	if m3.showHelp {
+		t.Error("second space press should close the shortcuts popup, not leave it open")
+	}
+	if m3.mode != modePicker || m3.picker.kind != pickerResource {
+		t.Errorf("second space press should open the resource search, got mode = %v, picker.kind = %v", m3.mode, m3.picker.kind)
+	}
+	if m3.pickerReturnMode != modeSplash {
+		t.Errorf("pickerReturnMode = %v, want modeSplash", m3.pickerReturnMode)
 	}
 }
 

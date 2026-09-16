@@ -10,17 +10,21 @@ import (
 
 type helpEntry struct {
 	key  string
+	icon string
 	desc string
 }
 
 var (
-	helpKeyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociHighlt)).Bold(true)
-	helpDescStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
+	helpKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ociHighlt)).Bold(true)
+	helpArrowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
+	helpIconStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociHighlt))
+	helpDescStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
 )
 
 // renderHelpBox builds the LazyVim-style which-key popup — every
 // applicable keybinding (m.helpEntries) as a bordered, right-aligned-key
-// list, meant to be overlaid on the bottom-right corner of the screen via
+// list ("key → icon description", matching LazyVim's own which-key popup),
+// meant to be overlaid on the bottom-right corner of the screen via
 // overlayBottomRight.
 func renderHelpBox(m Model) string {
 	entries := m.helpEntries()
@@ -35,7 +39,9 @@ func renderHelpBox(m Model) string {
 	var b strings.Builder
 	for i, e := range entries {
 		b.WriteString(helpKeyStyle.Render(fmt.Sprintf("%-*s", keyWidth, e.key)))
-		b.WriteString("  ")
+		b.WriteString(helpArrowStyle.Render(" → "))
+		b.WriteString(helpIconStyle.Render(e.icon))
+		b.WriteString(" ")
 		b.WriteString(helpDescStyle.Render(e.desc))
 		if i < len(entries)-1 {
 			b.WriteString("\n")
@@ -44,7 +50,11 @@ func renderHelpBox(m Model) string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(ociBorder)).
+		// Matches the ":" resource search's border (splashLogoStyle, the
+		// home screen's logo/corner wordmark red) rather than the app's
+		// usual green ociBorder — both are floating popups over the table,
+		// unlike the plain green-bordered table/detail boxes underneath.
+		BorderForeground(splashLogoStyle.GetForeground()).
 		Padding(0, 1).
 		Render(b.String())
 }
@@ -81,7 +91,7 @@ func overlayTopRight(base, box string, termWidth int) string {
 // horizontally and a third of the way down vertically (rather than dead
 // center — reads better above a table that already draws the eye toward
 // its top) — same ansi.Cut-based splicing as overlayBottomRight. Used for
-// the "f" resource-search picker, which floats over the table rather than
+// the ":" resource-search picker, which floats over the table rather than
 // replacing it.
 func overlayCenter(base, box string, termWidth, termHeight int) string {
 	boxWidth, boxLines := overlayBoxDims(box)
@@ -105,7 +115,7 @@ func overlayCenterAtY(base, box string, termWidth, y int) string {
 // overlayBottom splices box onto the bottom of an already-rendered view,
 // horizontally centered — the same idea as overlayBottomRight, just
 // centered instead of right-aligned. Used for the "M" resource map, which
-// floats over the table (like "f"'s overlayCenter) rather than replacing
+// floats over the table (like ":"'s overlayCenter) rather than replacing
 // the whole screen the way modeDetail normally does.
 func overlayBottom(base, box string, termWidth int) string {
 	boxWidth, boxLines := overlayBoxDims(box)
@@ -185,7 +195,7 @@ func spliceOverlay(baseLines, boxLines []string, x, y, termWidth int) string {
 		// Keep whatever was past the box's own right edge too — for a
 		// corner overlay (help box, cornerLogo) the box already reaches
 		// the true edge so this is empty and a no-op, but a narrower,
-		// centered box (the "f" resource search) would otherwise wipe out
+		// centered box (the ":" resource search) would otherwise wipe out
 		// real content to its right, like a table box's own border, on
 		// every row it overlaps.
 		right := ansi.Cut(baseLines[row], x+ansi.StringWidth(boxLine), 1<<20)

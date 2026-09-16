@@ -156,7 +156,7 @@ type Model struct {
 
 	// pickerReturnMode is where Esc (or a no-op confirm) sends the current
 	// picker back to. Zero value is modeTable, right for every ordinary
-	// "f"/"c" picker opened from the table; openResourceSearch's home-screen
+	// ":"/"c" picker opened from the table; openResourceSearch's home-screen
 	// call site (splash.go) sets it to modeSplash so the floating search
 	// closes back onto the home menu instead of dropping into the (still
 	// resourceless) table underneath it.
@@ -1177,7 +1177,7 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 	}
 	m.resIdx = idx
 	// A VCN filter stays active while moving between VCN-scoped resources
-	// (Subnets, Instances, ...), so hopping between them via "f" doesn't
+	// (Subnets, Instances, ...), so hopping between them via ":" doesn't
 	// need re-picking the VCN each time. Switching to anything else
 	// (Compartments, DRGs, or back to the VCN list itself) drops it.
 	if !isVcnDependent(m.resources[idx].Key()) {
@@ -1235,7 +1235,7 @@ func (m *Model) reloadCurrent() tea.Cmd {
 
 // vcnPickerResourceKeys is OCI's own VCN detail page layout — the subset of
 // VCN-scoped resources Enter on a VCN row (selectVcnFilter) jumps straight
-// into, rather than the full "f" search across every resource kind. Order
+// into, rather than the full ":" search across every resource kind. Order
 // here is the picker's own display order.
 var vcnPickerResourceKeys = []string{"subnet", "route-table", "security-list", "gateway"}
 
@@ -1334,7 +1334,7 @@ func (m *Model) selectDrgFilter(id, name, compartmentID string) {
 	m.openDrgResourceSearch()
 }
 
-// openResourceSearch opens the "f"/":" centered fuzzy picker over every
+// openResourceSearch opens the ":" centered fuzzy picker over every
 // resource kind, grouped into categories (resourcePickerItems) the same
 // way OCI's own console groups its left nav.
 func (m *Model) openResourceSearch() {
@@ -1784,6 +1784,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
+			// Same double-tap-space idiom as modeTable (see updateTable):
+			// the menu already shows every one of its own shortcuts
+			// directly, so the popup's only real job here is teaching that
+			// a second space press is a fast path into the resource search.
+			wasHelpOpen := m.showHelp
+			if msg.String() == "space" {
+				if wasHelpOpen {
+					m.showHelp = false
+					m.openResourceSearch()
+					m.pickerReturnMode = modeSplash
+					return m, nil
+				}
+				m.showHelp = true
+				return m, nil
+			}
+			m.showHelp = false
 			for _, it := range splashMenuItems {
 				if msg.String() == it.key {
 					return m, it.action(&m)
@@ -2323,15 +2339,21 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// wasHelpOpen, not m.showHelp — the block above already closed it
 		// unconditionally, so re-checking m.showHelp here would always see
 		// false and reopen it every time, making space a no-op toggle.
-		if !wasHelpOpen {
-			m.showHelp = true
+		if wasHelpOpen {
+			// Pressing space again while the popup was already open (i.e.
+			// double-tapping space) is a fast path straight to the
+			// resource search — the same thing ":" does, just
+			// discoverable without already knowing that key.
+			m.openResourceSearch()
+			return m, nil
 		}
+		m.showHelp = true
 		return m, nil
 
 	case "ctrl+c", "q":
 		return m, tea.Quit
 
-	case ":", "f":
+	case ":":
 		m.openResourceSearch()
 		return m, nil
 
@@ -2685,9 +2707,13 @@ func (m Model) View() tea.View {
 
 func (m Model) viewContent() string {
 	if m.mode == modeSplash {
-		return renderSplash(m)
+		out := renderSplash(m)
+		if m.showHelp {
+			out = overlayBottomRight(out, renderHelpBox(m), m.width)
+		}
+		return out
 	}
-	// The resource search opened from the home screen (splash.go's "f")
+	// The resource search opened from the home screen (splash.go's ":")
 	// floats over the home menu itself instead of the ordinary header/table
 	// chrome underneath — there's no resource loaded there yet, so showing
 	// it would just be an empty table for no reason.
@@ -2847,7 +2873,7 @@ func (m Model) viewContent() string {
 // showsEmptyResourceHint is true when the table has genuinely finished
 // loading with zero rows — not mid-fetch (m.loading), not erroring, and not
 // just narrowed to nothing by a filter query. The common real case: jumping
-// straight to a resource from the home screen (or "f") lands on the root
+// straight to a resource from the home screen (or ":") lands on the root
 // compartment, which usually holds nothing directly — everything lives in
 // sub-compartments — so a first-time user sees a blank table with no clue
 // why.
@@ -2972,7 +2998,7 @@ func (m Model) resourceSearchY() int {
 	return spare * 4 / 7
 }
 
-// resourceSearchListWidth/resourceSearchTotalWidth compute the "f" search's
+// resourceSearchListWidth/resourceSearchTotalWidth compute the ":" search's
 // list-pane width and the width of the whole picker (list + gap +
 // description pane, when there's room for one — see renderResourceSearch).
 // Split out so updatePickerMouse's click math can rebuild the same list
@@ -3002,11 +3028,11 @@ func (m Model) resourceSearchTotalWidth() int {
 }
 
 // resourceSearchSplitThreshold is the minimum total width that gets a
-// description pane at all — below it (a narrow terminal), the "f" search
+// description pane at all — below it (a narrow terminal), the ":" search
 // falls back to the plain single list box, same as before the split.
 const resourceSearchSplitThreshold = 80
 
-// renderResourceSearch draws the "f" resource-search picker as a wide,
+// renderResourceSearch draws the ":" resource-search picker as a wide,
 // Telescope-style split view: the fuzzy tree on the left (renderResourceSearchList)
 // and a description of whatever's under the cursor on the right
 // (renderResourceSearchDescription) — the extra width the tree box picked
@@ -3123,7 +3149,7 @@ func (m Model) renderResourceSearchList(width int) string {
 
 // renderResourceSearchDescription draws the preview pane: a short paragraph
 // (resourceDescriptions) about whichever resource is currently highlighted,
-// titled with its name — the "f" search's equivalent of a file picker's
+// titled with its name — the ":" search's equivalent of a file picker's
 // preview pane. height matches the list box's own line count (see
 // renderResourceSearch), same as LazyVim's own file/preview panes running
 // full height regardless of how little the preview side actually has.
@@ -3243,80 +3269,85 @@ func (m Model) renderPrompt() string {
 // entire content of the status line before it moved there. Order here is
 // the order both render in.
 func (m Model) helpEntries() []helpEntry {
-	var entries []helpEntry
-	add := func(key, desc string) { entries = append(entries, helpEntry{key, desc}) }
-
-	add("j/k, ↑↓", "move")
-	add("shift+↑/↓", "scroll half page")
-	add("d", "detail")
-	add("y", "copy OCID")
-	add("f / :", "search resources")
-	add("c", "compartment")
-	if m.subtreeOn {
-		add("C", "subtree: on")
-	} else {
-		add("C", "subtree: off")
+	// The home screen already shows every one of its own shortcuts
+	// directly on the menu — this popup exists there only to teach the
+	// second-space-opens-search idiom (see modeSplash's key dispatch).
+	if m.mode == modeSplash {
+		return []helpEntry{{"⎵", "\uf002", "search resources"}}
 	}
-	add("/", "filter")
-	add("r", "region")
-	add("R", "refresh")
-	if m.blinkEnabled {
-		add("b", "blink: on")
+	var entries []helpEntry
+	add := func(key, icon, desc string) { entries = append(entries, helpEntry{key, icon, desc}) }
+
+	add("d", "", "detail")
+	add("y", "", "copy OCID")
+	add(":", "", "search resources")
+	add("⎵", "", "search resources")
+	add("c", "", "compartment")
+	if m.subtreeOn {
+		add("C", "", "subtree: on")
 	} else {
-		add("b", "blink: off")
+		add("C", "", "subtree: off")
+	}
+	add("/", "", "filter")
+	add("r", "", "region")
+	add("R", "", "refresh")
+	if m.blinkEnabled {
+		add("b", "", "blink: on")
+	} else {
+		add("b", "", "blink: off")
 	}
 	if m.current().Key() == "subnet" && m.scope.VcnID == "" {
 		if m.groupByVcn {
-			add("g", "group by vcn: on")
+			add("g", "", "group by vcn: on")
 		} else {
-			add("g", "group by vcn: off")
+			add("g", "", "group by vcn: off")
 		}
 	}
 	if m.current().Key() == "exascale" {
 		if m.exascaleNodeTree {
-			add("g", "show nodes: on")
+			add("g", "", "show nodes: on")
 		} else {
-			add("g", "show nodes: off")
+			add("g", "", "show nodes: off")
 		}
 	}
-	add("e", "export csv")
+	add("e", "", "export csv")
 	if m.vcnFilterName != "" {
-		add("m", "export diagram")
-		add("M", "resource map")
+		add("m", "", "export diagram")
+		add("M", "", "resource map")
 	} else if m.current().Key() == "vcn" {
-		add("M", "resource map")
+		add("M", "", "resource map")
 	}
 	if _, ok := m.actionable(); ok {
 		if m.writeEnabled {
-			add("a", "actions")
+			add("⤶", "", "actions")
 		} else {
-			add("a", "actions (readonly)")
+			add("⤶", "", "actions (readonly)")
 		}
 	}
 	if m.current().Key() == "instance" || (m.current().Key() == "exascale" && m.exascaleNodeTreeActive()) {
 		if m.writeEnabled {
-			add("s", "ssh")
+			add("s", "", "ssh")
 		} else {
-			add("s", "ssh (readonly)")
+			add("s", "", "ssh (readonly)")
 		}
 	}
 	if m.current().Key() == "vcn" {
-		add("enter / i", "filter by this VCN")
+		add("⤶ / i", "", "filter by this VCN")
 	}
 	if m.current().Key() == "drg" {
-		add("enter / i", "filter by this DRG")
+		add("⤶ / i", "", "filter by this DRG")
 	}
 	if key := m.current().Key(); key == "security-list" || key == "route-table" || key == "nsg" || key == "drg-route-table" {
-		add("v", "view rules")
+		add("v", "", "view rules")
 	}
 	if m.subtreeOn && m.subtreeLoadedCount() < len(m.subtreeTargets) {
-		add("backspace", "cancel subtree fetch")
+		add("⌫", "", "cancel subtree fetch")
 	} else if len(m.history) > 0 {
-		add("backspace", "back")
+		add("⌫", "", "back")
 	} else if m.vcnFilterName != "" || m.drgFilterName != "" {
-		add("backspace", "up")
+		add("⌫", "", "up")
 	}
-	add("q", "quit")
+	add("q", "", "quit")
 	return entries
 }
 
