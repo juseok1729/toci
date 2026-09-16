@@ -29,20 +29,89 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 
 ## Features
 
-- **Resource search** — press `:` for a two-pane fuzzy picker (list + description) over every resource kind, jump straight to one.
-- **Compartment switching** — press `c` for a fuzzy compartment tree picker; Compartments themselves are an info-only view (`Enter`/`d` shows detail).
-- **VCN/DRG/OKE-scoped pickers** — `Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions; an OKE row floats a menu for its Node Pools (`g` expands each pool into a tree of its worker nodes) or Add-ons (installed add-ons and their status).
-- **VCN-scoped filtering** — pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, Internet/NAT/Service Gateways, OKE Clusters, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
-- **25 resource kinds** across Compute, Network, Gateways, Storage, Containers, and Database — see the `:` search for the full, categorized list.
-- **Recently Created** — a home-screen shortcut (also in the `:` search) listing every resource created in the last 3 days, across every kind, newest first. Creation-only: OCI's list APIs don't expose a last-modified timestamp, so this can't track edits to existing resources.
-- **Instance table** with live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, OS image version, subnet, public/private IP, and a colored STATE column (every resource kind gets green/red/yellow text for healthy/failed/needs-attention states — see [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md)).
-- **Rules viewer** — `v` on a Security List/Route Table/NSG/DRG Route Table row floats its ingress/egress or route rules as a table over the bottom of the screen, instead of raw nested YAML.
-- **CSV export** (UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including a rules table.
-- **Mermaid diagram export** — generates a `.mmd` flowchart (`graph TD` + nested `subgraph`) of a VCN's subnets, the Instances/DB Systems/Autonomous DBs/Exadata VM Clusters in each, and any DRGs attached to the VCN.
-- **Resource map** — an in-app, AWS-console-style view of a VCN's Subnets, the Route Tables they use, and the Internet/NAT/Service/Local Peering Gateways and DRGs those route tables target, connected column to column.
-- **LazyVim-style shortcuts popup** — press `space` for a which-key-style overlay of every binding that applies to the current screen.
-- **Region switcher**, local fuzzy filter, live refresh.
-- **Bastion SSH** — resolve an instance's private IP, create a Bastion session, and drop straight into an SSH shell.
+<details>
+<summary><strong>Resource search</strong></summary>
+
+press `:` for a two-pane fuzzy picker (list + description) over every resource kind, jump straight to one.
+</details>
+
+<details>
+<summary><strong>Compartment switching</strong></summary>
+
+press `c` for a fuzzy compartment tree picker; Compartments themselves are an info-only view (`Enter`/`d` shows detail).
+</details>
+
+<details>
+<summary><strong>VCN/DRG/OKE-scoped pickers</strong></summary>
+
+`Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions; an OKE row floats a menu for its Node Pools (`g` expands each pool into a tree of its worker nodes) or Add-ons (installed add-ons and their status).
+</details>
+
+<details>
+<summary><strong>VCN-scoped filtering</strong></summary>
+
+pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, Internet/NAT/Service Gateways, OKE Clusters, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
+</details>
+
+<details>
+<summary><strong>25 resource kinds</strong></summary>
+
+across Compute, Network, Gateways, Storage, Containers, and Database — see the `:` search for the full, categorized list.
+</details>
+
+<details>
+<summary><strong>Recently Created</strong></summary>
+
+a home-screen shortcut (also in the `:` search) listing every resource created in the last 3 days, across every kind, newest first. Creation-only: OCI's list APIs don't expose a last-modified timestamp, so this can't track edits to existing resources.
+</details>
+
+<details>
+<summary><strong>Instance table</strong></summary>
+
+live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, OS image version, subnet, public/private IP, and a colored STATE column (every resource kind gets green/red/yellow text for healthy/failed/needs-attention states — see [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md)).
+</details>
+
+<details>
+<summary><strong>Rules viewer</strong></summary>
+
+`v` on a Security List/Route Table/NSG/DRG Route Table row floats its ingress/egress or route rules as a table over the bottom of the screen, instead of raw nested YAML.
+</details>
+
+<details>
+<summary><strong>CSV export</strong></summary>
+
+(UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including a rules table.
+</details>
+
+<details>
+<summary><strong>Mermaid diagram export</strong></summary>
+
+generates a `.mmd` flowchart (`graph TD` + nested `subgraph`) of a VCN's subnets, the Instances/DB Systems/Autonomous DBs/Exadata VM Clusters in each, and any DRGs attached to the VCN.
+</details>
+
+<details>
+<summary><strong>Resource map</strong></summary>
+
+an in-app, AWS-console-style view of a VCN's Subnets, the Route Tables they use, and the Internet/NAT/Service/Local Peering Gateways and DRGs those route tables target, connected column to column.
+</details>
+
+<details>
+<summary><strong>LazyVim-style shortcuts popup</strong></summary>
+
+press `space` for a which-key-style overlay of every binding that applies to the current screen.
+</details>
+
+<details>
+<summary><strong>Region switcher</strong></summary>
+
+local fuzzy filter, live refresh.
+</details>
+
+<details>
+<summary><strong>Bastion SSH</strong></summary>
+
+resolve an instance's private IP, create a Bastion session, and drop straight into an SSH shell.
+</details>
 
 ## Prerequisites
 
