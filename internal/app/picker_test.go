@@ -2,6 +2,22 @@ package app
 
 import "testing"
 
+// charm.land/bubbles/v2's fuzzy.Find returns no matches for a query like
+// "dddd" that doesn't fuzzy-match anything, so p.filtered ends up empty —
+// selectableIndex must not panic indexing into it.
+func TestPickerRefilterWithNoMatchesDoesNotPanic(t *testing.T) {
+	p := picker{items: pickerTestItems, filtered: pickerTestItems}
+	p.input.SetValue("zzzzznomatch")
+	p.refilter()
+
+	if len(p.filtered) != 0 {
+		t.Fatalf("expected no matches for a nonsense query, got %d", len(p.filtered))
+	}
+	if _, ok := p.selected(); ok {
+		t.Errorf("selected() should report nothing selected when filtered is empty")
+	}
+}
+
 // items models resourcePickerItems' shape: a category header (key == "")
 // followed by its resources.
 var pickerTestItems = []pickerItem{

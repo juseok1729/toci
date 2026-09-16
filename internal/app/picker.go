@@ -111,6 +111,9 @@ func (p *picker) selected() (pickerItem, bool) {
 // Returns from unchanged if the list has nothing selectable at all (e.g.
 // filtered to zero items), which selected()'s own bounds check handles.
 func selectableIndex(items []pickerItem, from int) int {
+	if len(items) == 0 {
+		return from
+	}
 	for i := from; i < len(items); i++ {
 		if items[i].key != "" {
 			return i
