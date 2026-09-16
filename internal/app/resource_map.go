@@ -112,6 +112,32 @@ func (m Model) renderResourceMapOverlayBox() string {
 	return strings.Join(lines, "\n")
 }
 
+// renderRulesOverlayBox is renderResourceMapOverlayBox's rules-view cousin:
+// wraps m.detail's current view (a security-list/route-table/nsg/
+// drg-route-table rules table, sized to resourceMapOverlaySize by
+// openRulesOverlay/relayout) in the same bordered box, floated over the
+// table by overlayBottom in viewContent instead of replacing the screen.
+func (m Model) renderRulesOverlayBox() string {
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ociBorder)).
+		Padding(0, 1)
+	lines := strings.Split(style.Render(m.detail.View()), "\n")
+
+	hint := "esc/v close"
+	if m.detailExport != nil {
+		hint = "e export csv · " + hint
+	}
+	title := titleStyle.Render(" Rules — " + hint + " ")
+	topWidth := ansi.StringWidth(lines[0])
+	x := (topWidth - ansi.StringWidth(title)) / 2
+	if x < 0 {
+		x = 0
+	}
+	lines[0] = embedInLine(lines[0], title, x)
+	return strings.Join(lines, "\n")
+}
+
 // gatewayEntity is a resource map "network connection" box's content
 // before it's placed under a route table — name plus an optional detail
 // line (currently just a NAT gateway's public IP; other gateway kinds

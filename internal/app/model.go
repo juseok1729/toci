@@ -283,6 +283,13 @@ type Model struct {
 	resourceMap         *resourceMapData
 	resourceMapSelected int
 
+	// rulesOverlay is true while modeDetail is showing a rules view
+	// (security-list/route-table/nsg/drg-route-table's "v" key) as a
+	// bottom-of-screen overlay over the table — the same treatment as the
+	// "M" resource map (see resourceMap's own doc) — rather than replacing
+	// the whole screen. Cleared on leaving modeDetail.
+	rulesOverlay bool
+
 	// showHelp toggles the LazyVim-style which-key popup (space bar). Not
 	// a mode: other keys keep working normally while it's shown (and
 	// close it after acting), so it's just an overlay flag checked at
@@ -978,11 +985,12 @@ func (m *Model) relayout() {
 		tableWidth = mainAbsFloor
 	}
 	m.table.SetWidth(tableWidth)
-	if m.resourceMap != nil {
-		// The "M" resource map floats over the table in a bottom overlay
-		// box rather than replacing the whole screen — see
-		// resourceMapOverlaySize's doc — so m.detail gets sized to that
-		// box instead of the full page while it's showing.
+	if m.resourceMap != nil || m.rulesOverlay {
+		// The "M" resource map (and, the same way, a "v" rules view) floats
+		// over the table in a bottom overlay box rather than replacing the
+		// whole screen — see resourceMapOverlaySize's doc — so m.detail
+		// gets sized to that box instead of the full page while it's
+		// showing.
 		w, h := m.resourceMapOverlaySize()
 		m.detail.SetWidth(w)
 		m.detail.SetHeight(h)
@@ -1156,11 +1164,78 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 	return m.load()
 }
 
+// vcnPickerResourceKeys is OCI's own VCN detail page layout — the subset of
+// VCN-scoped resources Enter on a VCN row (selectVcnFilter) jumps straight
+// into, rather than the full "f" search across every resource kind. Order
+// here is the picker's own display order.
+var vcnPickerResourceKeys = []string{"subnet", "route-table", "security-list", "gateway"}
+
+// drgPickerResourceKeys is vcnPickerResourceKeys' DRG analog — the subset
+// Enter on a DRG row (selectDrgFilter) jumps straight into, matching OCI's
+// own DRG detail page (Attachments, Route Tables, Route Distributions).
+var drgPickerResourceKeys = []string{"drg-attachment", "drg-route-table", "drg-route-distribution"}
+
+// openVcnResourceSearch is openResourceSearch's narrower cousin: floats a
+// picker over just vcnPickerResourceKeys instead of every resource kind —
+// new users kept landing on the full 19-resource search right after
+// picking a VCN and not realizing they'd already scoped down to it, when
+// OCI's own console only ever shows Subnets/Route Tables/Security Lists on
+// a VCN's own page.
+func (m *Model) openVcnResourceSearch() {
+	m.openScopedResourceSearch("VCN Resources", vcnPickerResourceKeys)
+}
+
+// openDrgResourceSearch is openVcnResourceSearch's DRG analog, triggered by
+// Enter on a DRG row (selectDrgFilter).
+func (m *Model) openDrgResourceSearch() {
+	m.openScopedResourceSearch("DRG Resources", drgPickerResourceKeys)
+}
+
+// openScopedResourceSearch floats a flat (no category headers), fuzzy-
+// filterable picker over exactly the given resource keys — shared by
+// openVcnResourceSearch/openDrgResourceSearch, whose only difference is the
+// title and key list.
+func (m *Model) openScopedResourceSearch(title string, keys []string) {
+	currentKey := m.current().Key()
+	items := make([]pickerItem, 0, len(keys))
+	for _, key := range keys {
+		for _, r := range m.resources {
+			if r.Key() == key {
+				items = append(items, pickerItem{key: r.Key(), label: r.Label(), isCurrent: r.Key() == currentKey})
+				break
+			}
+		}
+	}
+
+	p := newPicker(pickerResource, title, nil)
+	p.treeFilter = func(query string) []pickerItem {
+		if query == "" {
+			return items
+		}
+		labels := make([]string, len(items))
+		for i, it := range items {
+			labels[i] = it.label
+		}
+		kept := make([]pickerItem, 0, len(items))
+		for _, mm := range fuzzy.Find(query, labels) {
+			kept = append(kept, items[mm.Index])
+		}
+		return kept
+	}
+	p.refilter()
+
+	m.picker = p
+	m.mode = modePicker
+	m.pickerReturnMode = modeTable
+	m.pickerLastClickIndex = pickerNoClick
+}
+
 // selectVcnFilter scopes every VCN-dependent resource (see
 // isVcnDependent) to one VCN — triggered by "i" on a VCN row, or by Enter —
-// then opens the resource search so the user can jump straight to one of
-// them. It doesn't switch resource or reload itself: nothing needs
-// fetching until a specific resource is picked.
+// then opens the VCN-scoped resource picker (openVcnResourceSearch) so the
+// user can jump straight to one of them. It doesn't switch resource or
+// reload itself: nothing needs fetching until a specific resource is
+// picked.
 //
 // compartmentID is the row's own compartment (registry.Row.CompartmentID) —
 // non-empty only while a subtree fan-out is active and this VCN came from a
@@ -1175,7 +1250,7 @@ func (m *Model) selectVcnFilter(id, name, compartmentID string) {
 	}
 	m.scope.VcnID = id
 	m.vcnFilterName = name
-	m.openResourceSearch()
+	m.openVcnResourceSearch()
 }
 
 // selectDrgFilter is selectVcnFilter's DRG analog — triggered by "i" or
@@ -1187,7 +1262,7 @@ func (m *Model) selectDrgFilter(id, name, compartmentID string) {
 	}
 	m.scope.DrgID = id
 	m.drgFilterName = name
-	m.openResourceSearch()
+	m.openDrgResourceSearch()
 }
 
 // openResourceSearch opens the "f"/":" centered fuzzy picker over every
@@ -1321,6 +1396,21 @@ func (m *Model) openDetailContent(content string) {
 	m.detail.SetContent(content)
 	m.detail.GotoTop()
 	m.detailExport = nil
+}
+
+// openRulesOverlay switches to modeDetail showing a rules table (security-
+// list/route-table/nsg/drg-route-table's "v" key) as a bottom-of-screen
+// overlay over the table — the same treatment as the "M" resource map —
+// rather than a full-page replacement.
+func (m *Model) openRulesOverlay(content string, export *detailExportData) {
+	m.rulesOverlay = true
+	// Size m.detail to the floating overlay box (not the full page) before
+	// rendering into it — relayout() branches on m.rulesOverlay, now true.
+	m.relayout()
+	m.mode = modeDetail
+	m.detail.SetContent(content)
+	m.detail.GotoTop()
+	m.detailExport = export
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1481,14 +1571,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.statusMsg = ""
-		m.mode = modeDetail
-		m.detail.SetContent(renderSecurityRules(msg.name, msg.records))
-		m.detail.GotoTop()
-		m.detailExport = &detailExportData{
+		m.openRulesOverlay(renderSecurityRules(msg.name, msg.records), &detailExportData{
 			filenameSuffix: "nsg-rules-" + msg.name,
 			header:         securityRuleHeaders,
 			records:        msg.records,
-		}
+		})
 		return m, nil
 
 	case drgRouteRulesMsg:
@@ -1497,14 +1584,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.statusMsg = ""
-		m.mode = modeDetail
-		m.detail.SetContent(renderDrgRouteRules(msg.name, msg.records))
-		m.detail.GotoTop()
-		m.detailExport = &detailExportData{
+		m.openRulesOverlay(renderDrgRouteRules(msg.name, msg.records), &detailExportData{
 			filenameSuffix: "drg-route-rules-" + msg.name,
 			header:         drgRouteRuleHeaders,
 			records:        msg.records,
-		}
+		})
 		return m, nil
 
 	case bastionsMsg:
@@ -1685,18 +1769,19 @@ func (m Model) updateEmbeddedTerm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q", "v":
+	case "esc", "q", "v", "backspace":
 		// "v" toggles: it opened this rules view (security-list/route-table/
 		// nsg/drg-route-table — see updateTable's "v" case), so pressing it
 		// again closes the same way esc/q already do, rather than needing a
 		// different key to back out of what "v" got you into.
 		m.mode = modeTable
-		wasResourceMap := m.resourceMap != nil
+		wasOverlay := m.resourceMap != nil || m.rulesOverlay
 		m.resourceMap = nil
-		if wasResourceMap {
-			// m.detail was sized to the resource map's smaller floating
-			// box (see relayout()) — restore full-page sizing for
-			// whatever opens in modeDetail next.
+		m.rulesOverlay = false
+		if wasOverlay {
+			// m.detail was sized to the resource map's/rules view's
+			// smaller floating box (see relayout()) — restore full-page
+			// sizing for whatever opens in modeDetail next.
 			m.relayout()
 		}
 		return m, nil
@@ -2369,14 +2454,11 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		m.mode = modeDetail
-		m.detail.SetContent(content)
-		m.detail.GotoTop()
-		m.detailExport = &detailExportData{
+		m.openRulesOverlay(content, &detailExportData{
 			filenameSuffix: suffix + name,
 			header:         headers,
 			records:        records,
-		}
+		})
 		return m, nil
 
 	case "m":
@@ -2561,10 +2643,11 @@ func (m Model) viewContent() string {
 	if renderMode == modePicker && (m.picker.kind == pickerResource || m.picker.kind == pickerCompartment) {
 		renderMode = modeTable
 	}
-	if renderMode == modeDetail && m.resourceMap != nil {
-		// The "M" resource map floats over the table instead of replacing
-		// the screen — render the table normally and overlay it below,
-		// same as the resource-search/compartment pickers above.
+	if renderMode == modeDetail && (m.resourceMap != nil || m.rulesOverlay) {
+		// The "M" resource map (and a "v" rules view) floats over the
+		// table instead of replacing the screen — render the table
+		// normally and overlay it below, same as the resource-search/
+		// compartment pickers above.
 		renderMode = modeTable
 	}
 
@@ -2657,6 +2740,9 @@ func (m Model) viewContent() string {
 	}
 	if m.mode == modeDetail && m.resourceMap != nil {
 		out = overlayBottom(out, m.renderResourceMapOverlayBox(), m.width)
+	}
+	if m.mode == modeDetail && m.rulesOverlay {
+		out = overlayBottom(out, m.renderRulesOverlayBox(), m.width)
 	}
 	if m.showsEmptyResourceHint() {
 		out = overlayCenter(out, m.renderEmptyResourceHint(), m.width, m.height)
@@ -2772,15 +2858,25 @@ func (m Model) renderPicker() string {
 // where the box actually is.
 //
 // Anchored to the box's maximum possible height (every item, no filter —
-// see resourcePickerItems) rather than however tall it happens to be right
-// now: narrowing the list with a query should only shorten the box from the
-// bottom, not slide the whole thing (top edge included) down as it shrinks.
+// via the picker's own treeFilter, so this works the same whether it's the
+// full "f" search or a narrower one like openVcnResourceSearch) rather than
+// however tall it happens to be right now: narrowing the list with a query
+// should only shorten the box from the bottom, not slide the whole thing
+// (top edge included) down as it shrinks.
 func (m Model) resourceSearchY() int {
-	maxItems := len(resourcePickerItems(m.resources, m.current().Key(), ""))
+	maxItems := len(m.picker.treeFilter(""))
 	maxLines := maxItems + pickerResourceItemsTop + 2 // +2: the box's own top/bottom border rows
 	spare := m.height - maxLines
 	if m.pickerReturnMode == modeSplash {
 		return spare / 3
+	}
+	// A short picker (e.g. openVcnResourceSearch's ~4 items) has far more
+	// spare room than the full "f" search's ~20+ does, so the same
+	// fraction of it pushes a small box much further down in absolute
+	// terms than it does the tall one — a smaller fraction keeps it nearer
+	// the middle instead of down by the table's bottom edge.
+	if maxItems <= 10 {
+		return spare / 4
 	}
 	return spare * 4 / 7
 }
@@ -2920,7 +3016,10 @@ func (m Model) renderResourceSearchList(width int) string {
 	topWidth := ansi.StringWidth(lines[0])
 	titleX := (topWidth - ansi.StringWidth(title)) / 2
 
-	count := countLogoStyle.Render(fmt.Sprintf(" %d/%d ", pickerLeafCount(m.picker.filtered), len(m.resources)))
+	// Denominator is this picker's own pool (via treeFilter), not
+	// len(m.resources) — openVcnResourceSearch's pool is 3, not every
+	// resource kind, and "3/19" would be a nonsense count for it.
+	count := countLogoStyle.Render(fmt.Sprintf(" %d/%d ", pickerLeafCount(m.picker.filtered), pickerLeafCount(m.picker.treeFilter(""))))
 	countX := topWidth - ansi.StringWidth(count) - 1
 	if countX > titleX+ansi.StringWidth(title) {
 		lines[0] = embedTwoInLine(lines[0], title, titleX, count, countX)

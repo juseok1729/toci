@@ -87,6 +87,63 @@ func TestSelectVcnFilterKeepsScopeWithoutSubtree(t *testing.T) {
 	}
 }
 
+// TestSelectVcnFilterOpensVcnScopedPickerOnly checks the OCI-console-style
+// narrowing: Enter on a VCN row should float a picker over just
+// vcnPickerResourceKeys (Subnets/Route Tables/Security Lists/All Gateways),
+// not the full "f" search across every resource kind — new users kept
+// landing on all of them and not realizing they'd already scoped to a VCN.
+func TestSelectVcnFilterOpensVcnScopedPickerOnly(t *testing.T) {
+	m := &Model{resources: registry.All(nil), table: newTable(20)}
+	m.selectVcnFilter("vcn1", "my-vcn", "")
+
+	if m.mode != modePicker || m.picker.kind != pickerResource {
+		t.Fatalf("mode = %v, picker.kind = %v, want modePicker/pickerResource", m.mode, m.picker.kind)
+	}
+
+	got := make([]string, len(m.picker.filtered))
+	for i, it := range m.picker.filtered {
+		got[i] = it.key
+	}
+	want := []string{"subnet", "route-table", "security-list", "gateway"}
+	if len(got) != len(want) {
+		t.Fatalf("picker items = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("picker items = %v, want %v", got, want)
+			break
+		}
+	}
+}
+
+// TestSelectDrgFilterOpensDrgScopedPickerOnly is
+// TestSelectVcnFilterOpensVcnScopedPickerOnly's DRG analog: Enter on a DRG
+// row should float a picker over just DRG Attachments/Route Tables/Route
+// Distributions (drgPickerResourceKeys), not the full "f" search.
+func TestSelectDrgFilterOpensDrgScopedPickerOnly(t *testing.T) {
+	m := &Model{resources: registry.All(nil), table: newTable(20)}
+	m.selectDrgFilter("drg1", "my-drg", "")
+
+	if m.mode != modePicker || m.picker.kind != pickerResource {
+		t.Fatalf("mode = %v, picker.kind = %v, want modePicker/pickerResource", m.mode, m.picker.kind)
+	}
+
+	got := make([]string, len(m.picker.filtered))
+	for i, it := range m.picker.filtered {
+		got[i] = it.key
+	}
+	want := []string{"drg-attachment", "drg-route-table", "drg-route-distribution"}
+	if len(got) != len(want) {
+		t.Fatalf("picker items = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("picker items = %v, want %v", got, want)
+			break
+		}
+	}
+}
+
 func previewData() resourceMapData {
 	return resourceMapData{
 		vcnName: "hub-and-spoke",
