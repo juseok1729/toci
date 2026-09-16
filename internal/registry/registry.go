@@ -3,8 +3,10 @@ package registry
 import "toci/internal/clients"
 
 // All returns every resource kind the UI can browse, in display order.
+// RecentResource is appended last since it fans out across everything
+// before it in this slice (see its own doc).
 func All(f *clients.Factory) []Resource {
-	return []Resource{
+	resources := []Resource{
 		NewCompartmentResource(f),
 		NewInstanceResource(f),
 		NewVcnResource(f),
@@ -29,4 +31,5 @@ func All(f *clients.Factory) []Resource {
 		NewCloudVmClusterResource(f),
 		NewExadbVmClusterResource(f),
 	}
+	return append(resources, NewRecentResource(resources))
 }

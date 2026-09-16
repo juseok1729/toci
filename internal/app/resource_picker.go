@@ -30,7 +30,7 @@ var resourceCategories = []struct {
 	// Compartment is last, not first — global scope ("c") already lets
 	// users switch compartments anytime, so nudging them to pick one here
 	// before browsing resources just adds friction.
-	{"Governance", []string{"compartment"}},
+	{"Governance", []string{"recent", "compartment"}},
 }
 
 // resourcePickerItems flattens resources into the tree picker's rows:

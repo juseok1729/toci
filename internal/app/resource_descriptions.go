@@ -29,4 +29,5 @@ var resourceDescriptions = map[string]string{
 	"exadata":                "An Exadata VM cluster is a set of virtual machines on Exadata Cloud Infrastructure that share the underlying Exadata hardware and provide the compute layer for one or more DB systems running on it.",
 	"exascale":               "Exadata Database Service on Exascale Infrastructure pools compute and storage across a fleet of Exadata hardware, letting VM clusters scale compute and storage independently and elastically instead of in fixed increments.",
 	"compartment":            "A compartment is a logical container for organizing and isolating your cloud resources — for billing, access control via IAM policies, and management. Every resource belongs to exactly one compartment.",
+	"recent":                 "Every resource created in the last 3 days, across every kind, merged into one list sorted newest first — a quick way to see what's new without checking each resource kind by hand. Based on creation time only, not later edits.",
 }

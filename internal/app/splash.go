@@ -125,6 +125,7 @@ var splashMenuItems = []splashMenuItem{
 		m.pickerReturnMode = modeSplash
 		return nil
 	}}, // nf-fa-search
+	{"", "Recently Created", "r", splashResourceAction("recent")}, // nf-fa-history
 	{"", "Instances", "i", splashResourceAction("instance")},           // nf-fa-server
 	{"", "VCNs", "v", splashResourceAction("vcn")},                     // nf-fa-sitemap
 	{"", "OKE Clusters", "k", splashResourceAction("oke")},             // nf-fa-cubes

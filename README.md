@@ -33,7 +33,8 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 - **Compartment switching** — press `c` for a fuzzy compartment tree picker; Compartments themselves are an info-only view (`Enter`/`d` shows detail).
 - **VCN/DRG-scoped pickers** — `Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions.
 - **VCN-scoped filtering** — pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, Internet/NAT/Service Gateways, OKE Clusters, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
-- **23 resource kinds** across Compute, Network, Gateways, Storage, Containers, and Database — see the `f` search for the full, categorized list.
+- **24 resource kinds** across Compute, Network, Gateways, Storage, Containers, and Database — see the `f` search for the full, categorized list.
+- **Recently Created** — a home-screen shortcut (also in the `f` search) listing every resource created in the last 3 days, across every kind, newest first. Creation-only: OCI's list APIs don't expose a last-modified timestamp, so this can't track edits to existing resources.
 - **Instance table** with live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, OS image version, subnet, public/private IP, and a colored STATE column (every resource kind gets green/red/yellow text for healthy/failed/needs-attention states — see [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md)).
 - **Rules viewer** — `v` on a Security List/Route Table/NSG/DRG Route Table row floats its ingress/egress or route rules as a table over the bottom of the screen, instead of raw nested YAML.
 - **CSV export** (UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including a rules table.
