@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"toci/internal/registry"
 )
@@ -69,6 +70,55 @@ func TestEscOnActionPickerClosesOnlyThatPickerNotAllTheWayToSplash(t *testing.T)
 	m3 := mi.(Model)
 	if m3.mode != modeTable {
 		t.Errorf("mode after Esc = %v, want modeTable (should close only the action picker, not jump to a stale pickerReturnMode)", m3.mode)
+	}
+}
+
+// TestRenderPickerActionKindUsesSearchColors checks the requested styling:
+// the action picker's border/title match the ":" resource search's own
+// red, its cursor row is padded flush to the box's own width (like the
+// search box's row highlight) instead of only as wide as the label text,
+// and unselected items render in the search box's pink label color.
+func TestRenderPickerActionKindUsesSearchColors(t *testing.T) {
+	m := Model{}
+	m.picker = newPicker(pickerAction, "action: my-instance", []pickerItem{
+		{key: "start", label: "Start"},
+		{key: "stop", label: "Stop"},
+	})
+
+	out := m.renderPicker()
+	lines := strings.Split(out, "\n")
+
+	borderColor := "38;2;252;100;100" // splashLogoStyle's #fc6464
+	if !strings.Contains(lines[0], borderColor) {
+		t.Errorf("border should use the search box's red, line 0 = %q", lines[0])
+	}
+	if !strings.Contains(lines[1], borderColor) || !strings.Contains(lines[1], "my-instance") {
+		t.Errorf("title line should be styled in the search box's red, got %q", lines[1])
+	}
+
+	var cursorLine, itemLine string
+	for _, l := range lines {
+		if strings.Contains(l, "Start") {
+			cursorLine = l
+		}
+		if strings.Contains(l, "Stop") {
+			itemLine = l
+		}
+	}
+	if !strings.Contains(cursorLine, "48;2;246;203;203") {
+		t.Errorf("cursor row should use the search box's cursor background (#f6cbcb), got %q", cursorLine)
+	}
+	if !strings.Contains(itemLine, "38;2;246;203;203") || strings.Contains(itemLine, "48;2;246;203;203") {
+		t.Errorf("unselected item should use the search box's pink foreground with no background, got %q", itemLine)
+	}
+
+	// The cursor row's own background should stretch flush to the box's
+	// right border, not stop right after "Start" — same width as the
+	// input line right below the title (which is textInputWidth-wide).
+	stripped := ansi.Strip(cursorLine)
+	inputStripped := ansi.Strip(lines[2])
+	if len(stripped) != len(inputStripped) {
+		t.Errorf("cursor row width = %d, want %d (matching the input line's width)", len(stripped), len(inputStripped))
 	}
 }
 

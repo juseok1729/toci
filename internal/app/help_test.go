@@ -66,10 +66,25 @@ func TestRenderHelpBoxShowsArrowAndIcon(t *testing.T) {
 	m := Model{resources: registry.All(nil), table: newTable(20)}
 	out := renderHelpBox(m)
 
-	if !strings.Contains(out, "→") {
+	if !strings.Contains(out, "➜") {
 		t.Error("expected the help box to show an arrow between each key and its description")
 	}
 	if !strings.Contains(out, "quit") {
 		t.Error("expected the help box to still list \"quit\"")
+	}
+}
+
+// TestRenderHelpBoxAlwaysShowsCloseBackFooter: LazyVim's own which-key
+// popup always shows a static "esc close / backspace back" reminder below
+// the dynamic keymap list, regardless of which entries apply — checked on
+// both modeTable's popup (a real dynamic list) and modeSplash's (a single
+// entry), so the footer isn't accidentally tied to one or the other.
+func TestRenderHelpBoxAlwaysShowsCloseBackFooter(t *testing.T) {
+	for _, mode := range []mode{modeTable, modeSplash} {
+		m := Model{resources: registry.All(nil), table: newTable(20), mode: mode}
+		out := renderHelpBox(m)
+		if !strings.Contains(out, "ESC") || !strings.Contains(out, "close") || !strings.Contains(out, "⌫") || !strings.Contains(out, "back") {
+			t.Errorf("mode %v: expected the help box to always show the close/back footer, got:\n%s", mode, out)
+		}
 	}
 }

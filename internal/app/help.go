@@ -15,7 +15,11 @@ type helpEntry struct {
 }
 
 var (
-	helpKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ociHighlt)).Bold(true)
+	// helpKeyStyle matches the home screen's own menu label color
+	// (splashMenuLabelStyle) instead of the app's usual gold accent, since
+	// this popup is itself LazyVim's which-key styled after that same
+	// home screen.
+	helpKeyStyle   = lipgloss.NewStyle().Foreground(splashMenuLabelStyle.GetForeground()).Bold(true)
 	helpArrowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
 	helpIconStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociHighlt))
 	helpDescStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ociSubtle))
@@ -36,17 +40,39 @@ func renderHelpBox(m Model) string {
 		}
 	}
 
-	var b strings.Builder
+	lines := make([]string, len(entries))
+	maxWidth := 0
 	for i, e := range entries {
-		b.WriteString(helpKeyStyle.Render(fmt.Sprintf("%-*s", keyWidth, e.key)))
-		b.WriteString(helpArrowStyle.Render(" → "))
-		b.WriteString(helpIconStyle.Render(e.icon))
-		b.WriteString(" ")
-		b.WriteString(helpDescStyle.Render(e.desc))
-		if i < len(entries)-1 {
-			b.WriteString("\n")
+		var line strings.Builder
+		line.WriteString(helpKeyStyle.Render(fmt.Sprintf("%-*s", keyWidth, e.key)))
+		line.WriteString(helpArrowStyle.Render(" ➜ "))
+		line.WriteString(helpIconStyle.Render(e.icon))
+		line.WriteString(" ")
+		line.WriteString(helpDescStyle.Render(e.desc))
+		lines[i] = line.String()
+		if w := lipgloss.Width(lines[i]); w > maxWidth {
+			maxWidth = w
 		}
 	}
+
+	// Static footer, always shown below the dynamic keymap list above —
+	// LazyVim's own which-key popup does the same, and spells ESC out as
+	// plain bold text there rather than a Unicode symbol (unlike ⌫, which
+	// it does draw as a glyph) — matched here too, both in the same red
+	// as the keymap list's own keys (helpKeyStyle) rather than the
+	// footer's muted "close"/"back" wording. Esc/Backspace's actual
+	// behavior (close this popup like any other floating view; go back)
+	// is otherwise only ever documented per-context above (e.g.
+	// "cancel subtree fetch"), never as a plain, permanent reminder.
+	footer := helpKeyStyle.Render("ESC") + helpDescStyle.Render(" close") + "  " + helpKeyStyle.Render("⌫") + helpDescStyle.Render(" back")
+	if w := lipgloss.Width(footer); w > maxWidth {
+		maxWidth = w
+	}
+	if pad := (maxWidth - lipgloss.Width(footer)) / 2; pad > 0 {
+		footer = strings.Repeat(" ", pad) + footer
+	}
+
+	body := strings.Join(lines, "\n") + "\n\n" + footer
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -56,7 +82,7 @@ func renderHelpBox(m Model) string {
 		// unlike the plain green-bordered table/detail boxes underneath.
 		BorderForeground(splashLogoStyle.GetForeground()).
 		Padding(0, 1).
-		Render(b.String())
+		Render(body)
 }
 
 // overlayBottomRight splices box onto the bottom-right corner of an

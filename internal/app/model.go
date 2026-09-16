@@ -49,6 +49,19 @@ var (
 	boxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(ociBorder)).Padding(0, 1)
 	selStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color(ociSelBg)).Bold(true)
 
+	// searchSelStyle is the ":" resource search's own row-highlight color
+	// — #f6cbcb instead of selStyle's usual green (ociSelBg), shared by
+	// renderResourceSearchList and renderPicker's own pickerAction case
+	// (Enter on an Instance row), both of which float over the table the
+	// same way. Foreground flips to near-black: selStyle's white text has
+	// poor contrast against a background this light.
+	searchSelStyle = selStyle.Background(lipgloss.Color("#f6cbcb")).Foreground(lipgloss.Color("16"))
+
+	// resourceSearchLabelStyle is an unselected row's label in that same
+	// pink, instead of the terminal's plain default foreground, which
+	// read as a flat gray next to the cursor row's own highlight.
+	resourceSearchLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f6cbcb"))
+
 	// headerValueStyle is titleStyle's white counterpart, scoped to just the
 	// Profile/Region/Resource/Compartment values and the corner version
 	// line — titleStyle itself stays ociAccent everywhere else (picker/box
@@ -3167,17 +3180,56 @@ func (m Model) cornerSubtitle() string {
 }
 
 func (m Model) renderPicker() string {
+	isAction := m.picker.kind == pickerAction
+
+	// The box auto-sizes to its widest line, which isn't known until every
+	// line (including the cursor one) is built — computed up front so
+	// the cursor row (pickerAction only) can pad itself flush to it, the
+	// same full-width highlight the resource search's own row gets. In
+	// practice the "> "+input.View() line (textInputWidth-wide) already
+	// dominates this, so the highlight already reaches the right edge.
+	maxWidth := lipgloss.Width(m.picker.title)
+	if w := lipgloss.Width("> " + m.picker.input.View()); w > maxWidth {
+		maxWidth = w
+	}
+	for _, it := range m.picker.filtered {
+		if w := lipgloss.Width("> " + it.label); w > maxWidth {
+			maxWidth = w
+		}
+	}
+
+	titleStyleUsed := titleStyle
+	cursorStyle := selStyle
+	if isAction {
+		// Matches the ":" resource search's own colors instead of the
+		// app's usual green/white every other renderPicker()-based kind
+		// (region/bastion/ssh) keeps — Enter on an Instance row floats
+		// this one the same way the search box floats, over the table
+		// rather than replacing it.
+		titleStyleUsed = titleStyle.Foreground(splashLogoStyle.GetForeground())
+		cursorStyle = searchSelStyle
+	}
+
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(m.picker.title))
+	b.WriteString(titleStyleUsed.Render(m.picker.title))
 	b.WriteString("\n> ")
 	b.WriteString(m.picker.input.View())
 	b.WriteString("\n\n")
 	for i, it := range m.picker.filtered {
-		line := it.label
-		if i == m.picker.cursor {
-			line = selStyle.Render("> " + line)
-		} else {
-			line = "  " + line
+		var line string
+		switch {
+		case i == m.picker.cursor:
+			content := "> " + it.label
+			if isAction {
+				if pad := maxWidth - lipgloss.Width(content); pad > 0 {
+					content += strings.Repeat(" ", pad)
+				}
+			}
+			line = cursorStyle.Render(content)
+		case isAction:
+			line = "  " + resourceSearchLabelStyle.Render(it.label)
+		default:
+			line = "  " + it.label
 		}
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -3185,7 +3237,11 @@ func (m Model) renderPicker() string {
 	if len(m.picker.filtered) == 0 {
 		b.WriteString(statusStyle.Render("  (no matches)"))
 	}
-	return boxStyle.Render(b.String())
+	style := boxStyle
+	if isAction {
+		style = boxStyle.BorderForeground(splashLogoStyle.GetForeground())
+	}
+	return style.Render(b.String())
 }
 
 // resourceSearchVisibleRows caps how many rows (category headers included)
@@ -3353,18 +3409,6 @@ func (m Model) renderResourceSearchList(width int) string {
 	// box (table, other pickers, ...) keeps its usual green.
 	titleLogoStyle := titleStyle.Foreground(splashLogoStyle.GetForeground())
 	countLogoStyle := statusStyle.Foreground(splashLogoStyle.GetForeground())
-	// The highlighted row's own color — #f6cbcb instead of the shared
-	// selStyle's green (ociSelBg), scoped to this box alone so the
-	// resource table's row cursor (model.go's other selStyle.Render call,
-	// via table.Styles.Selected) keeps its usual color. Foreground flips
-	// to near-black: selStyle's white text has poor contrast against a
-	// background this light.
-	searchSelStyle := selStyle.Background(lipgloss.Color("#f6cbcb")).Foreground(lipgloss.Color("16"))
-	// An unselected row's label in the same pink as the cursor row's own
-	// highlight — previously the terminal's plain default foreground,
-	// which read as a flat gray next to it. The glyph (tree connector)
-	// stays unstyled: only the label itself changes color.
-	resourceSearchLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f6cbcb"))
 
 	itemLines := []string{
 		"> " + m.picker.input.View(),
