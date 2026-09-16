@@ -137,7 +137,7 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 | `Enter` | Compartment: 상세(YAML) 보기 · VCN: 이 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커, `i`와 동일 · DRG: 이 DRG의 Attachment/Route Table/Route Distribution만 모은 피커 · 그 외: 동작 없음 |
 | `d` | 선택한 행의 상세(YAML) 보기 — 모든 리소스 종류 |
 | `Esc` | 열려있는 창/뷰 닫기 (상세, 리소스맵, 규칙 뷰, `f` 검색 등) |
-| `Backspace` | 뒤로가기: 필터 해제 → VCN 필터 해제 → DRG 필터 해제 (해당되는 첫 번째 동작 실행) |
+| `Backspace` | 뒤로가기: 필터 해제 후, 실제로 봤던 리소스를 한 단계씩 되돌아감 (예: VCN → Subnet → DB System → Subnet → VCN) |
 | `Tab` | 다음 리소스 종류로 순환 전환 |
 | `f` / `:` | 모든 리소스 종류를 2단 창(목록 + 설명)에서 검색해서 진입 |
 | `/` | 현재 목록을 이름으로 필터링 |

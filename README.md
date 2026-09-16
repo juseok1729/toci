@@ -137,7 +137,7 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 | `Enter` | Compartment: view detail (YAML) · VCN: float a picker over its Subnets/Route Tables/Security Lists/Gateways, same as `i` · DRG: float a picker over its Attachments/Route Tables/Route Distributions · everything else: no-op |
 | `d` | View detail (YAML) for the selected row, any resource kind |
 | `Esc` | Close whatever window/view is open (detail, resource map, rules view, the `f` search, ...) |
-| `Backspace` | Go back: clear the filter → back out of a VCN filter → back out of a DRG filter (whichever applies first) |
+| `Backspace` | Go back: clear the filter, then step back through the resources you've actually visited one at a time (e.g. VCN → Subnet → DB System → Subnet → VCN) |
 | `Tab` | Cycle to the next resource kind |
 | `f` / `:` | Search every resource kind in a two-pane picker (list + description) and jump to one |
 | `/` | Filter the current list by name |

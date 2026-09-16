@@ -60,10 +60,55 @@ func TestBackspaceGoesBackInTableWhenNoTextInput(t *testing.T) {
 	}
 }
 
-// TestBackspaceOnlyClosesPickerWhenInputEmpty: modePicker's backspace must
-// stay ordinary text-editing while there's a query typed — only closing
-// (like esc) once there's nothing left to delete.
-func TestBackspaceOnlyClosesPickerWhenInputEmpty(t *testing.T) {
+// TestBackspaceStepsBackThroughResourceHistory locks in the requested
+// behavior: VCN -> Subnet -> DB System, then backspace should land back on
+// Subnet, and backspace again on VCN — one step per press, not a single
+// jump straight out of the VCN scope the way exitVcn does.
+func TestBackspaceStepsBackThroughResourceHistory(t *testing.T) {
+	m := Model{mode: modeTable, resources: registry.All(nil), table: newTable(20)}
+
+	var vcnIdx, subnetIdx, dbSystemIdx = -1, -1, -1
+	for i, r := range m.resources {
+		switch r.Key() {
+		case "vcn":
+			vcnIdx = i
+		case "subnet":
+			subnetIdx = i
+		case "db-system":
+			dbSystemIdx = i
+		}
+	}
+	if vcnIdx < 0 || subnetIdx < 0 || dbSystemIdx < 0 {
+		t.Fatal("expected \"vcn\", \"subnet\", and \"db-system\" to be registered resources")
+	}
+
+	m.switchResource(vcnIdx) // the very first switch — shouldn't push anything (nothing real to go back to yet)
+	m.scope.VcnID = "vcn1"
+	m.vcnFilterName = "my-vcn"
+	m.switchResource(subnetIdx)
+	m.switchResource(dbSystemIdx)
+	if m.resIdx != dbSystemIdx {
+		t.Fatalf("resIdx = %d, want dbSystemIdx = %d", m.resIdx, dbSystemIdx)
+	}
+
+	mi, _ := m.Update(backspaceMsg)
+	m2 := mi.(Model)
+	if m2.resIdx != subnetIdx {
+		t.Errorf("first backspace: resIdx = %d (%s), want subnetIdx = %d", m2.resIdx, m2.resources[m2.resIdx].Key(), subnetIdx)
+	}
+
+	mi, _ = m2.Update(backspaceMsg)
+	m3 := mi.(Model)
+	if m3.resIdx != vcnIdx {
+		t.Errorf("second backspace: resIdx = %d (%s), want vcnIdx = %d", m3.resIdx, m3.resources[m3.resIdx].Key(), vcnIdx)
+	}
+}
+
+// TestBackspaceNeverClosesPicker: modePicker's backspace is pure text
+// editing — esc is the only key that closes it, even once the query is
+// empty (closing on an empty backspace press was indistinguishable from
+// esc and surprised users expecting backspace to never dismiss a window).
+func TestBackspaceNeverClosesPicker(t *testing.T) {
 	m := Model{resources: registry.All(nil), table: newTable(20)}
 	m.openResourceSearch()
 
@@ -80,14 +125,14 @@ func TestBackspaceOnlyClosesPickerWhenInputEmpty(t *testing.T) {
 	m2.picker.input.SetValue("")
 	mi, _ = m2.Update(backspaceMsg)
 	m3 := mi.(Model)
-	if m3.mode != m2.pickerReturnMode {
-		t.Errorf("backspace with an empty query should close the picker like esc, mode = %v, want %v", m3.mode, m2.pickerReturnMode)
+	if m3.mode != modePicker {
+		t.Errorf("backspace with an empty query should not close the picker, mode = %v, want modePicker", m3.mode)
 	}
 }
 
-// TestBackspaceOnlyClearsFilterWhenInputEmpty is modePicker's test above,
-// mirrored for the "/" filter input.
-func TestBackspaceOnlyClearsFilterWhenInputEmpty(t *testing.T) {
+// TestBackspaceNeverClearsFilter is modePicker's test above, mirrored for
+// the "/" filter input.
+func TestBackspaceNeverClearsFilter(t *testing.T) {
 	m := Model{mode: modeFilter, resources: registry.All(nil), table: newTable(20), filterInput: textinput.New()}
 	m.filterInput.SetValue("abc")
 	m.filterInput.Focus() // textinput.Update ignores keys while blurred
@@ -105,7 +150,7 @@ func TestBackspaceOnlyClearsFilterWhenInputEmpty(t *testing.T) {
 	m2.filterInput.SetValue("")
 	mi, _ = m2.Update(backspaceMsg)
 	m3 := mi.(Model)
-	if m3.mode != modeTable {
-		t.Errorf("backspace with an empty filter should close it like esc, mode = %v, want modeTable", m3.mode)
+	if m3.mode != modeFilter {
+		t.Errorf("backspace with an empty filter should not close it, mode = %v, want modeFilter", m3.mode)
 	}
 }

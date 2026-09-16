@@ -97,6 +97,10 @@ func (m *Model) switchCompartment(id, name string, subtree *bool) tea.Cmd {
 	m.drgFilterName = ""
 	m.vcnNames = nil
 	m.err = nil
+	// A Backspace history entry pinned to the old compartment would jump
+	// the user right back to it — drop the stack, same as the VCN/DRG
+	// scope reset above.
+	m.history = nil
 
 	// relayout() below re-renders the table against m.displayRows using
 	// m.displayColumns() for the (possibly just-changed) subtreeOn state —

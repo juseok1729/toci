@@ -261,12 +261,25 @@ type Model struct {
 
 	// vcnFilterName is non-empty while the Instance table is scoped to one
 	// VCN (scope.VcnID set) via the "i" key on a VCN row — shown in the
-	// header and used to know what Esc should back out of.
+	// header and used to know what Backspace should back out of.
 	vcnFilterName string
 
 	// drgFilterName is the DRG-attachment analog of vcnFilterName — non-empty
 	// while scope.DrgID is set via "i"/Enter on a DRG row.
 	drgFilterName string
+
+	// history is the stack of resource+scope combinations actually visited
+	// (pushed by switchResource before each switch — see navigateBack),
+	// letting Backspace step back one view at a time (VCN -> Subnet -> DB
+	// System -> backspace -> Subnet -> backspace -> VCN) instead of only
+	// jumping straight out of any active VCN/DRG scope.
+	history []historyEntry
+
+	// navigated flips true after the first real switchResource call, so
+	// the very first resource picked from the home screen (splash.go) —
+	// which has no prior table the user actually saw — doesn't push a
+	// phantom entry onto history.
+	navigated bool
 
 	// detailExport holds what "e" should export while in modeDetail — set
 	// by "v" (security rules table), cleared whenever Enter opens the
@@ -1121,7 +1134,38 @@ var drgIDRequiredResourceKeys = map[string]bool{
 	"drg-route-table": true, "drg-route-distribution": true,
 }
 
+// historyEntry is one previously-viewed resource+scope combination, pushed
+// by switchResource (see pushHistory) before it replaces the current one.
+// navigateBack pops these to let Backspace step back through the resources
+// actually visited, one at a time, rather than only jumping straight out
+// of any active VCN/DRG scope the way exitVcn/exitDrg do.
+type historyEntry struct {
+	resIdx        int
+	scope         registry.Scope
+	vcnFilterName string
+	drgFilterName string
+}
+
+// pushHistory records the resource+scope combination switchResource is
+// about to replace, so navigateBack can restore it later. Skipped for the
+// very first switch (m.navigated still false — see its doc): that one
+// replaces whatever resIdx happened to default to, which the user never
+// actually saw a table for, so there's nothing real to go back to yet.
+func (m *Model) pushHistory() {
+	if !m.navigated {
+		m.navigated = true
+		return
+	}
+	m.history = append(m.history, historyEntry{
+		resIdx:        m.resIdx,
+		scope:         m.scope,
+		vcnFilterName: m.vcnFilterName,
+		drgFilterName: m.drgFilterName,
+	})
+}
+
 func (m *Model) switchResource(idx int) tea.Cmd {
+	m.pushHistory()
 	if drgIDRequiredResourceKeys[m.resources[idx].Key()] && m.scope.DrgID == "" {
 		m.statusMsg = "select a DRG first (\"i\" or Enter on a DRG row)"
 		for i, r := range m.resources {
@@ -1132,10 +1176,6 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 		}
 	}
 	m.resIdx = idx
-	m.rows = nil
-	m.filterQuery = ""
-	m.loading = true
-	m.err = nil
 	// A VCN filter stays active while moving between VCN-scoped resources
 	// (Subnets, Instances, ...), so hopping between them via "f" doesn't
 	// need re-picking the VCN each time. Switching to anything else
@@ -1150,6 +1190,35 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 		m.scope.DrgID = ""
 		m.drgFilterName = ""
 	}
+	return m.reloadCurrent()
+}
+
+// navigateBack pops the most recently pushed history entry and restores it
+// exactly as it was — unlike switchResource, it doesn't recompute
+// scope/filter names via isVcnDependent/isDrgDependent, since it's
+// replaying an already-valid past view rather than picking a new one.
+func (m *Model) navigateBack() tea.Cmd {
+	if len(m.history) == 0 {
+		return nil
+	}
+	last := len(m.history) - 1
+	entry := m.history[last]
+	m.history = m.history[:last]
+	m.resIdx = entry.resIdx
+	m.scope = entry.scope
+	m.vcnFilterName = entry.vcnFilterName
+	m.drgFilterName = entry.drgFilterName
+	return m.reloadCurrent()
+}
+
+// reloadCurrent resets the table for whatever m.resIdx/m.scope currently
+// are and (re)fetches it — the tail shared by switchResource (a fresh
+// pick) and navigateBack (replaying a past one).
+func (m *Model) reloadCurrent() tea.Cmd {
+	m.rows = nil
+	m.filterQuery = ""
+	m.loading = true
+	m.err = nil
 	// Subtree mode (F3) fans out across every compartment in scope for
 	// whatever resource is selected — switching resource re-fans-out
 	// instead of a plain single-compartment load. startSubtreeFanout
@@ -1823,14 +1892,6 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = m.pickerReturnMode
 		return m, nil
-	case "backspace":
-		// Backspace closes like esc only once there's nothing left to
-		// delete — otherwise it's just normal text editing (falls through
-		// to the input update below).
-		if m.picker.input.Value() == "" {
-			m.mode = m.pickerReturnMode
-			return m, nil
-		}
 	case "enter":
 		return m.confirmPicker()
 	case "tab":
@@ -1888,6 +1949,7 @@ func (m Model) confirmPicker() (tea.Model, tea.Cmd) {
 	switch m.picker.kind {
 	case pickerRegion:
 		m.scope.Region = item.key
+		m.history = nil // stale in the new region, same reasoning as switchCompartment
 		m.rows = nil
 		m.filterQuery = ""
 		m.setDisplayRows()
@@ -2054,16 +2116,6 @@ func (m Model) updateFilter(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.setDisplayRows()
 		m.mode = modeTable
 		return m, nil
-	case "backspace":
-		// Backspace closes like esc only once there's nothing left to
-		// delete — otherwise it's just normal text editing (falls through
-		// to the input update below).
-		if m.filterInput.Value() == "" {
-			m.filterQuery = m.filterBak
-			m.setDisplayRows()
-			m.mode = modeTable
-			return m, nil
-		}
 	case "enter":
 		m.filterQuery = m.filterInput.Value()
 		m.mode = modeTable
@@ -2083,14 +2135,6 @@ func (m Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = modeTable
 		return m, nil
-	case "backspace":
-		// Backspace closes like esc only once there's nothing left to
-		// delete — otherwise it's just normal text editing (falls through
-		// to the input update below).
-		if m.confirmInput.Value() == "" {
-			m.mode = modeTable
-			return m, nil
-		}
 	case "enter":
 		m.mode = modeTable
 		if m.confirmInput.Value() != m.pendingRow.Name {
@@ -2112,14 +2156,6 @@ func (m Model) updatePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = modeTable
 		return m, nil
-	case "backspace":
-		// Backspace closes like esc only once there's nothing left to
-		// delete — otherwise it's just normal text editing (falls through
-		// to the input update below).
-		if m.promptInput.Value() == "" {
-			m.mode = modeTable
-			return m, nil
-		}
 	case "enter":
 		username := m.promptInput.Value()
 		if username == "" {
@@ -2588,6 +2624,13 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.setDisplayRows()
 			return m, nil
 		}
+		if len(m.history) > 0 {
+			return m, m.navigateBack()
+		}
+		// history is empty (nothing to step back through) but a VCN/DRG
+		// scope is still active — e.g. Enter on a VCN row set it, then Esc
+		// cancelled the picker before switchResource ever pushed anything.
+		// Fall back to exitVcn/exitDrg's direct jump so it isn't stuck on.
 		if m.scope.VcnID != "" {
 			return m, m.exitVcn()
 		}
@@ -3259,10 +3302,12 @@ func (m Model) helpEntries() []helpEntry {
 	if key := m.current().Key(); key == "security-list" || key == "route-table" || key == "nsg" || key == "drg-route-table" {
 		add("v", "view rules")
 	}
-	if m.vcnFilterName != "" || m.drgFilterName != "" {
-		add("esc", "up")
-	} else if m.subtreeOn && m.subtreeLoadedCount() < len(m.subtreeTargets) {
-		add("esc", "cancel subtree fetch")
+	if m.subtreeOn && m.subtreeLoadedCount() < len(m.subtreeTargets) {
+		add("backspace", "cancel subtree fetch")
+	} else if len(m.history) > 0 {
+		add("backspace", "back")
+	} else if m.vcnFilterName != "" || m.drgFilterName != "" {
+		add("backspace", "up")
 	}
 	add("q", "quit")
 	return entries
