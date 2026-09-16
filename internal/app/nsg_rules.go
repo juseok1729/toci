@@ -23,12 +23,15 @@ func nsgRuleRecords(rules []core.SecurityRule) [][]string {
 		if r.Direction == core.SecurityRuleDirectionIngress {
 			endpoint = deref(r.Source)
 		}
+		proto := deref(r.Protocol)
 		records = append(records, []string{
 			string(r.Direction),
-			protocolName(deref(r.Protocol)),
-			endpoint,
-			portsString(r.TcpOptions, r.UdpOptions),
 			yesNo(r.IsStateless),
+			endpoint,
+			protocolName(proto),
+			srcPortString(r.TcpOptions, r.UdpOptions),
+			dstPortString(r.TcpOptions, r.UdpOptions),
+			icmpTypeCodeString(proto, r.IcmpOptions),
 			deref(r.Description),
 		})
 	}
@@ -75,7 +78,7 @@ func fetchNsgRules(ctx context.Context, factory *clients.Factory, region, nsgID 
 // already embedded in Row.Raw), this needs its own network call, so it's a
 // tea.Cmd like buildResourceMap/buildVcnDiagram.
 func (m Model) buildNsgRulesCmd(row registry.Row) tea.Cmd {
-	nsg, ok := row.Raw.(core.NetworkSecurityGroup)
+	nsg, ok := row.Raw.(registry.NsgRow)
 	if !ok {
 		return nil
 	}

@@ -10,10 +10,10 @@ import (
 )
 
 // TestNsgRuleRecords pins down the one bit of logic nsgRuleRecords adds on
-// top of the shared protocolName/portsString/yesNo helpers: an ingress
-// rule's endpoint comes from Source, an egress rule's from Destination —
-// core.SecurityRule holds both fields, only one of which is meaningful per
-// direction.
+// top of the shared protocolName/srcPortString/dstPortString/yesNo
+// helpers: an ingress rule's endpoint comes from Source, an egress rule's
+// from Destination — core.SecurityRule holds both fields, only one of
+// which is meaningful per direction.
 func TestNsgRuleRecords(t *testing.T) {
 	rules := []core.SecurityRule{
 		{
@@ -32,12 +32,22 @@ func TestNsgRuleRecords(t *testing.T) {
 			Destination: strPtr("0.0.0.0/0"),
 			IsStateless: boolPtr(true),
 		},
+		{
+			Direction: core.SecurityRuleDirectionIngress,
+			Protocol:  strPtr("1"), // ICMP
+			Source:    strPtr("0.0.0.0/0"),
+			IcmpOptions: &core.IcmpOptions{
+				Type: intPtr(3),
+				Code: intPtr(4),
+			},
+		},
 	}
 
 	got := nsgRuleRecords(rules)
 	want := [][]string{
-		{"INGRESS", "TCP", "10.0.0.0/24", "22", "no", "ssh in"},
-		{"EGRESS", "ALL", "0.0.0.0/0", "ALL", "yes", ""},
+		{"INGRESS", "no", "10.0.0.0/24", "TCP", "All", "22", "", "ssh in"},
+		{"EGRESS", "yes", "0.0.0.0/0", "ALL", "", "", "", ""},
+		{"INGRESS", "no", "0.0.0.0/0", "ICMP", "", "", "3:4", ""},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("nsgRuleRecords() = %v, want %v", got, want)
