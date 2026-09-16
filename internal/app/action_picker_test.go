@@ -49,6 +49,29 @@ func TestEnterOnInstanceRowFloatsActionPickerOverTheTable(t *testing.T) {
 	}
 }
 
+// TestEscOnActionPickerClosesOnlyThatPickerNotAllTheWayToSplash reproduces
+// a reported bug: opening the action picker left m.pickerReturnMode at
+// whatever it was last set to by some earlier, unrelated picker (e.g.
+// modeSplash, from the home screen's ":" search) — openActionPicker never
+// set its own, so Esc closed all the way back to that stale target instead
+// of just this floating action picker.
+func TestEscOnActionPickerClosesOnlyThatPickerNotAllTheWayToSplash(t *testing.T) {
+	m := instanceModelForActionTest(true)
+	m.pickerReturnMode = modeSplash // stale, left over from an earlier, unrelated picker
+
+	mi, _ := m.Update(enterMsg)
+	m2 := mi.(Model)
+	if m2.mode != modePicker || m2.picker.kind != pickerAction {
+		t.Fatalf("mode = %v, picker.kind = %v, want modePicker/pickerAction", m2.mode, m2.picker.kind)
+	}
+
+	mi, _ = m2.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m3 := mi.(Model)
+	if m3.mode != modeTable {
+		t.Errorf("mode after Esc = %v, want modeTable (should close only the action picker, not jump to a stale pickerReturnMode)", m3.mode)
+	}
+}
+
 func TestEnterOnInstanceRowInReadonlyModeShowsStatusInsteadOfOpeningPicker(t *testing.T) {
 	m := instanceModelForActionTest(false)
 

@@ -59,6 +59,10 @@ func (m *Model) openCompartmentPicker() {
 	}
 	m.picker = m.newCompartmentPicker(m.scope.CompartmentID, preselect)
 	m.mode = modePicker
+	// Always opened from modeTable (the "c" key) — without this, Esc used
+	// m.pickerReturnMode's last value from whatever picker was open
+	// before this one instead of just closing this one.
+	m.pickerReturnMode = modeTable
 }
 
 // boolPtr is switchCompartment's way of distinguishing "leave subtree mode

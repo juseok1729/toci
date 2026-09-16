@@ -663,6 +663,10 @@ func (m *Model) resolveSSHKey() (tea.Model, tea.Cmd) {
 	}
 	m.picker = newPicker(pickerSSHKey, "ssh key", items)
 	m.mode = modePicker
+	// Always reached from modeTable ("s" on an Instance row, via
+	// pickerSSHMode) — without this, Esc used m.pickerReturnMode's last
+	// value from whatever picker was open before this one.
+	m.pickerReturnMode = modeTable
 	return *m, nil
 }
 
@@ -1600,6 +1604,12 @@ func (m *Model) openActionPicker(row registry.Row) {
 	m.pendingRow = row
 	m.picker = newPicker(pickerAction, "action: "+row.Name, items)
 	m.mode = modePicker
+	// Always opened from a table row (Enter/updateTable) — without this,
+	// Esc used m.pickerReturnMode's last value from whatever picker was
+	// open before this one (e.g. still modeSplash from the home screen's
+	// ":" search, if that's how the user got to this table), closing
+	// straight back to it instead of just this floating action picker.
+	m.pickerReturnMode = modeTable
 }
 
 func (m Model) runAction(spec registry.ActionSpec, row registry.Row) tea.Cmd {
@@ -1853,6 +1863,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.picker = newPicker(pickerBastion, "bastion", msg.items)
 			m.mode = modePicker
+			// Always reached from modeTable ("s" on an Instance row) —
+			// without this, Esc used m.pickerReturnMode's last value from
+			// whatever picker was open before this one.
+			m.pickerReturnMode = modeTable
 		}
 		return m, nil
 
@@ -2536,6 +2550,10 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.picker = newPicker(pickerRegion, "region", m.regionItems)
 		m.mode = modePicker
+		// Always opened from modeTable (this is updateTable's own "r"
+		// case) — without this, Esc used m.pickerReturnMode's last value
+		// from whatever picker was open before this one.
+		m.pickerReturnMode = modeTable
 		if len(m.regionItems) > 0 {
 			return m, nil
 		}
@@ -2683,6 +2701,10 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			{key: "direct", label: "direct (local key, no bastion — e.g. over FastConnect)"},
 		})
 		m.mode = modePicker
+		// Always opened from modeTable (this is updateTable's own "s"
+		// case) — without this, Esc used m.pickerReturnMode's last value
+		// from whatever picker was open before this one.
+		m.pickerReturnMode = modeTable
 		return m, nil
 
 	case "i":
