@@ -146,6 +146,66 @@ func TestResourcePickerItemsMatchesOCIAbbreviations(t *testing.T) {
 	}
 }
 
+// TestResourcePickerItemsExcludesMidWordScatteredMatches reproduces two
+// reported bugs: querying "dbcs" (meant for DB Systems via its alias) and
+// "adb" (meant for Autonomous DB, also via its alias) both surfaced Load
+// Balancers too, ahead of the intended match — fuzzy.Find's lenient
+// subsequence matching happened to find each query's own letters scattered
+// across the *middle* of "Load Balancers" (e.g. "adb" as the "a"/"d" in
+// "Lo[a][d]" plus the "B" starting "Balancers"), and results aren't
+// reordered by score (see TestResourcePickerItemsFuzzyFilterPreservesCategoryOrder),
+// so the accidental hit landed above the real one just by category order.
+// matchStartsAtWordBoundary fixes this by requiring a match's first hit to
+// land on an actual word start, not partway through one.
+func TestResourcePickerItemsExcludesMidWordScatteredMatches(t *testing.T) {
+	resources := registry.All(nil)
+
+	cases := []struct{ query, wantKey string }{
+		{"dbcs", "db-system"},
+		{"adb", "adb"},
+	}
+	for _, c := range cases {
+		items := resourcePickerItems(resources, "", c.query)
+		for _, it := range items {
+			if it.key == "lb" {
+				t.Errorf("querying %q should not match Load Balancers (a mid-word scattered fuzzy hit, not a real one), got %+v", c.query, items)
+			}
+		}
+		found := false
+		for _, it := range items {
+			if it.key == c.wantKey {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("querying %q should still match %q, got %+v", c.query, c.wantKey, items)
+		}
+	}
+}
+
+// TestResourcePickerItemsMatchesByFirstLetter: typing a single letter
+// should surface resources whose name (or a word within it) actually
+// starts with that letter, not "no matches" — fuzzy.Find's raw score for
+// a lone character is often negative even when it does land on a real
+// word start (e.g. "a" against "All Gateways" scores -1), so this must go
+// through matchStartsAtWordBoundary rather than a score-based cutoff.
+func TestResourcePickerItemsMatchesByFirstLetter(t *testing.T) {
+	resources := registry.All(nil)
+	items := resourcePickerItems(resources, "", "a")
+
+	for _, wantKey := range []string{"gateway", "adb"} { // "All Gateways", "Autonomous DBs" — both start with "A"
+		found := false
+		for _, it := range items {
+			if it.key == wantKey {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf(`querying "a" should match %q (its label starts with "A"), got %+v`, wantKey, items)
+		}
+	}
+}
+
 func TestResourcePickerItemsUnknownResourceFallsBackToOther(t *testing.T) {
 	items := resourcePickerItems([]registry.Resource{fakeResource{key: "mystery", label: "Mystery Kind"}}, "", "")
 

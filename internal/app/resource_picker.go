@@ -2,6 +2,7 @@ package app
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/sahilm/fuzzy"
 
@@ -89,15 +90,28 @@ func resourcePickerItems(resources []registry.Resource, currentKey, query string
 			aliases[i] = strings.Join(resourceSearchAliases[l.res.Key()], " ")
 		}
 		matched := make([]bool, len(leaves))
-		for _, mm := range fuzzy.Find(query, labels) {
-			matched[mm.Index] = true
+		mark := func(candidates []string, matches fuzzy.Matches) {
+			for _, mm := range matches {
+				// fuzzy.Find's subsequence matching is lenient enough that
+				// a short query can accidentally match an unrelated
+				// candidate by pulling scattered letters out of the
+				// middle of it — "adb" matching "Lo[a]a[d] [B]alancers"
+				// (score even came out positive) and "dbcs" matching
+				// "Loa[d] [B]alan[c]er[s]" were both reported false
+				// positives. Requiring the match's first character to
+				// land on a word boundary (the very start, or right after
+				// a space) keeps it to what a user actually means by
+				// typing a query's first letter: the resource's own
+				// initial, or one of its words' — not some letter buried
+				// mid-word that merely happens to match.
+				if matchStartsAtWordBoundary(candidates[mm.Index], mm.MatchedIndexes) {
+					matched[mm.Index] = true
+				}
+			}
 		}
-		for _, mm := range fuzzy.Find(query, categories) {
-			matched[mm.Index] = true
-		}
-		for _, mm := range fuzzy.Find(query, aliases) {
-			matched[mm.Index] = true
-		}
+		mark(labels, fuzzy.Find(query, labels))
+		mark(categories, fuzzy.Find(query, categories))
+		mark(aliases, fuzzy.Find(query, aliases))
 		// Iterating matched in index order (rather than sorting fuzzy.Find's
 		// own score-ranked results) keeps leaves in resourceCategories'
 		// declared order — a query must narrow which rows show, not
@@ -134,6 +148,22 @@ func resourcePickerItems(resources []registry.Resource, currentKey, query string
 		i = j
 	}
 	return items
+}
+
+// matchStartsAtWordBoundary reports whether a fuzzy.Find match's first hit
+// (matchedIndexes[0], into s) lands at the very start of s or right after
+// a space — i.e. some word's initial letter — rather than buried in the
+// middle of one.
+func matchStartsAtWordBoundary(s string, matchedIndexes []int) bool {
+	if len(matchedIndexes) == 0 {
+		return false
+	}
+	i := matchedIndexes[0]
+	if i == 0 {
+		return true
+	}
+	r := []rune(s)
+	return i > 0 && i <= len(r) && unicode.IsSpace(r[i-1])
 }
 
 // pickerLeafCount counts the selectable (non-category-header) items in a
