@@ -3154,6 +3154,11 @@ func (m Model) renderResourceSearchList(width int) string {
 	// to near-black: selStyle's white text has poor contrast against a
 	// background this light.
 	searchSelStyle := selStyle.Background(lipgloss.Color("#f6cbcb")).Foreground(lipgloss.Color("16"))
+	// An unselected row's label in the same pink as the cursor row's own
+	// highlight — previously the terminal's plain default foreground,
+	// which read as a flat gray next to it. The glyph (tree connector)
+	// stays unstyled: only the label itself changes color.
+	resourceSearchLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f6cbcb"))
 
 	itemLines := []string{
 		"> " + m.picker.input.View(),
@@ -3194,7 +3199,11 @@ func (m Model) renderResourceSearchList(width int) string {
 		case isCategory:
 			line = "  " + titleLogoStyle.Render(text)
 		default:
-			line = "  " + text
+			label := it.label
+			if it.isCurrent {
+				label += " ●"
+			}
+			line = "  " + it.glyph + resourceSearchLabelStyle.Render(label)
 		}
 		itemLines = append(itemLines, line)
 	}
