@@ -111,6 +111,41 @@ func TestResourcePickerItemsDoesNotMatchAcrossCategoryAndLabel(t *testing.T) {
 	}
 }
 
+// TestResourcePickerItemsMatchesOCIAbbreviations: users search by the OCI
+// abbreviation they already know (e.g. "dbcs" for DB Systems, the reported
+// example) rather than toci's own spelled-out label — resourceSearchAliases
+// should surface the right resource for each of them.
+func TestResourcePickerItemsMatchesOCIAbbreviations(t *testing.T) {
+	resources := registry.All(nil)
+
+	cases := []struct{ query, wantKey string }{
+		{"dbcs", "db-system"},
+		{"sl", "security-list"},
+		{"sg", "service-gateway"},
+		{"nat", "nat-gateway"},
+		{"igw", "igw"},
+		{"vm", "instance"},
+		{"bm", "instance"},
+		{"os", "bucket"},
+		{"fss", "file-system"},
+		{"adw", "adb"},
+		{"atp", "adb"},
+		{"exacs", "exadata"},
+	}
+	for _, c := range cases {
+		items := resourcePickerItems(resources, "", c.query)
+		found := false
+		for _, it := range items {
+			if it.key == c.wantKey {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("querying %q should match %q, got %+v", c.query, c.wantKey, items)
+		}
+	}
+}
+
 func TestResourcePickerItemsUnknownResourceFallsBackToOther(t *testing.T) {
 	items := resourcePickerItems([]registry.Resource{fakeResource{key: "mystery", label: "Mystery Kind"}}, "", "")
 

@@ -1,13 +1,15 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/sahilm/fuzzy"
 
 	"toci/internal/registry"
 )
 
 // resourceCategories groups registry resource kinds under a heading for
-// the "f"/":" resource search's tree picker — the same shape OCI's own
+// the ":" resource search's tree picker — the same shape OCI's own
 // console groups its left nav into. Order here is both the category
 // display order and, within a category, the resource display order.
 var resourceCategories = []struct {
@@ -36,12 +38,12 @@ var resourceCategories = []struct {
 // resourcePickerItems flattens resources into the tree picker's rows:
 // a category header (key "") followed by each of its resources, connector
 // glyphs included. currentKey marks the active resource with "●". With a
-// non-empty query, a leaf is kept if the query fuzzy-matches its own label
-// or its category's name — checked as two separate matches, not one
-// against a concatenated "Category/Label" string, which let a query match
-// by pulling characters from both halves at once (e.g. "vcn" matching
-// "Go[v]ernan[c]e/Compart[n]ents" — a real reported bug, since neither
-// "Governance" nor "Compartments" has anything to do with VCNs).
+// non-empty query, a leaf is kept if the query fuzzy-matches its own label,
+// its category's name, or one of its resourceSearchAliases — checked as
+// separate matches, not one against a concatenated string, which let a
+// query match by pulling characters from both halves at once (e.g. "vcn"
+// matching "Go[v]ernan[c]e/Compart[n]ents" — a real reported bug, since
+// neither "Governance" nor "Compartments" has anything to do with VCNs).
 //
 // Any resource key registry.All() defines but resourceCategories doesn't
 // mention (a new resource kind someone forgot to categorize here) is filed
@@ -76,15 +78,24 @@ func resourcePickerItems(resources []registry.Resource, currentKey, query string
 	if query != "" {
 		labels := make([]string, len(leaves))
 		categories := make([]string, len(leaves))
+		aliases := make([]string, len(leaves))
 		for i, l := range leaves {
 			labels[i] = l.res.Label()
 			categories[i] = l.category
+			// Joined into one string per leaf rather than matched alias by
+			// alias: fuzzy.Find takes one candidate string per leaf, and a
+			// query only ever needs to match at least one of a resource's
+			// aliases, not all of them at once.
+			aliases[i] = strings.Join(resourceSearchAliases[l.res.Key()], " ")
 		}
 		matched := make([]bool, len(leaves))
 		for _, mm := range fuzzy.Find(query, labels) {
 			matched[mm.Index] = true
 		}
 		for _, mm := range fuzzy.Find(query, categories) {
+			matched[mm.Index] = true
+		}
+		for _, mm := range fuzzy.Find(query, aliases) {
 			matched[mm.Index] = true
 		}
 		// Iterating matched in index order (rather than sorting fuzzy.Find's
