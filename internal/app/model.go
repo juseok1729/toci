@@ -1823,6 +1823,14 @@ func (m Model) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = m.pickerReturnMode
 		return m, nil
+	case "backspace":
+		// Backspace closes like esc only once there's nothing left to
+		// delete — otherwise it's just normal text editing (falls through
+		// to the input update below).
+		if m.picker.input.Value() == "" {
+			m.mode = m.pickerReturnMode
+			return m, nil
+		}
 	case "enter":
 		return m.confirmPicker()
 	case "tab":
@@ -2046,6 +2054,16 @@ func (m Model) updateFilter(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.setDisplayRows()
 		m.mode = modeTable
 		return m, nil
+	case "backspace":
+		// Backspace closes like esc only once there's nothing left to
+		// delete — otherwise it's just normal text editing (falls through
+		// to the input update below).
+		if m.filterInput.Value() == "" {
+			m.filterQuery = m.filterBak
+			m.setDisplayRows()
+			m.mode = modeTable
+			return m, nil
+		}
 	case "enter":
 		m.filterQuery = m.filterInput.Value()
 		m.mode = modeTable
@@ -2065,6 +2083,14 @@ func (m Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = modeTable
 		return m, nil
+	case "backspace":
+		// Backspace closes like esc only once there's nothing left to
+		// delete — otherwise it's just normal text editing (falls through
+		// to the input update below).
+		if m.confirmInput.Value() == "" {
+			m.mode = modeTable
+			return m, nil
+		}
 	case "enter":
 		m.mode = modeTable
 		if m.confirmInput.Value() != m.pendingRow.Name {
@@ -2086,6 +2112,14 @@ func (m Model) updatePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = modeTable
 		return m, nil
+	case "backspace":
+		// Backspace closes like esc only once there's nothing left to
+		// delete — otherwise it's just normal text editing (falls through
+		// to the input update below).
+		if m.promptInput.Value() == "" {
+			m.mode = modeTable
+			return m, nil
+		}
 	case "enter":
 		username := m.promptInput.Value()
 		if username == "" {
@@ -2534,7 +2568,14 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// esc's job is closing a floating window/view (the "f" search, "M"
+	// resource map, "v" rules view, ...) — modeTable's own key handling
+	// here never has one of those open (they're their own modes), so
+	// there's nothing for esc to do. Clearing scope/filters and cancelling
+	// a fetch is "back to the previous screen" instead — backspace's job.
 	case "esc":
+		return m, nil
+	case "backspace":
 		if m.subtreeOn && m.subtreeLoadedCount() < len(m.subtreeTargets) {
 			if m.subtreeCancel != nil {
 				m.subtreeCancel()

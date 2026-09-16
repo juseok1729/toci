@@ -29,13 +29,14 @@
 
 ## 기능
 
-- **리소스 검색** — `f`를 누르면 화면 중앙에 모든 리소스 종류를 퍼지 검색하는 창이 뜨고, 바로 진입할 수 있습니다.
-- **컴파트먼트 탐색** — 지연(lazy) drill-down 방식 (`Enter`로 진입, `Esc`로 상위 복귀), 테넌시 전체 `inspect` 권한이 없어도 동작합니다.
-- **VCN 스코프 필터링** — VCN을 하나 고르면 그 VCN에 속한 모든 리소스(Subnet, Route Table, Security List, NSG, Instance, Load Balancer, DB System, Autonomous DB, Exadata VM Cluster)가 자동으로 그 VCN 기준으로 필터링됩니다.
-- **리소스 12종**: Compartments, Instances, VCNs, Subnets, Route Tables, Security Lists, NSGs, DRGs, Load Balancers, DB Systems, Autonomous Databases, Exadata VM Clusters.
+- **리소스 검색** — `f`를 누르면 모든 리소스 종류를 퍼지 검색하는 2단 창(목록 + 설명)이 뜨고, 바로 진입할 수 있습니다.
+- **컴파트먼트 전환** — `c`를 누르면 퍼지 컴파트먼트 트리 피커가 뜹니다. Compartments 자체는 정보 조회 전용(`Enter`/`d`로 상세 보기)입니다.
+- **VCN/DRG 스코프 피커** — VCN 행에서 `Enter`(또는 `i`)를 누르면 그 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커가 뜨고, DRG 행에서는 그 DRG의 Attachment/Route Table/Route Distribution만 모은 피커가 뜹니다.
+- **VCN 스코프 필터링** — VCN을 하나 고르면 그 VCN에 속한 모든 리소스(Subnet, Route Table, Security List, NSG, Instance, Load Balancer, Internet/NAT/Service Gateway, OKE Cluster, DB System, Autonomous DB, Exadata VM Cluster)가 자동으로 그 VCN 기준으로 필터링됩니다.
+- **리소스 23종**: Compute, Network, Gateways, Storage, Containers, Database 카테고리로 나뉘어 있습니다 — 전체 목록은 `f` 검색에서 확인 가능합니다.
 - **Instance 테이블** — 실시간 CPU%/MEM%(OCI Monitoring), OCPU/메모리 스펙, OS 이미지 버전, 서브넷, Public/Private IP, 색상으로 표시되는 STATE 컬럼(모든 리소스 종류에서 정상/실패/주의 상태를 초록/빨강/노랑 텍스트로 표시 — [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md) 참고).
-- **Security List 규칙 뷰어** — ingress/egress 규칙을 중첩된 YAML 대신 읽기 쉬운 표로 보여줍니다.
-- **CSV export** (UTF-8 BOM 포함, 엑셀에서 한글 안 깨짐) — 현재 화면에 보이는 내용 그대로 저장 (Security List 규칙 표도 export 가능).
+- **규칙 뷰어** — Security List/Route Table/NSG/DRG Route Table 행에서 `v`를 누르면 ingress/egress 또는 route 규칙을 화면 하단에 표 형태로 띄워줍니다(중첩된 YAML 대신).
+- **CSV export** (UTF-8 BOM 포함, 엑셀에서 한글 안 깨짐) — 현재 화면에 보이는 내용 그대로 저장 (규칙 표도 export 가능).
 - **Mermaid 다이어그램 export** — VCN의 서브넷별 구성(Instance/DB System/Autonomous DB/Exadata VM Cluster)과 그 VCN에 붙어있는 DRG까지 `graph TD` + 중첩 `subgraph` 문법의 `.mmd` 플로우차트로 생성합니다.
 - **리소스 맵** — AWS 콘솔 스타일로 VCN의 서브넷, 그 서브넷들이 쓰는 라우팅 테이블, 그 라우팅 테이블이 가리키는 인터넷/NAT/서비스/로컬 피어링 게이트웨이와 DRG를 컬럼별로 연결선과 함께 앱 안에서 바로 보여줍니다.
 - **LazyVim 스타일 단축키 팝업** — `space`를 누르면 현재 화면에서 쓸 수 있는 모든 단축키가 우측 하단에 뜹니다.
@@ -128,24 +129,25 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 ./toci --profile DEV --write                # 쓰기 액션 활성화 (인스턴스 start/stop, Bastion SSH)
 ```
 
-시작하면 테넌시 루트 컴파트먼트의 Compartments 목록이 뜹니다. `Enter`로 드릴다운하고, 하위 컴파트먼트가 없으면 자동으로 그 컴파트먼트의 VCN 목록으로 넘어갑니다.
-
 ## 키 바인딩
 
 | 키 | 동작 |
 | --- | --- |
 | `j` / `k` (또는 방향키) | 위/아래 이동 |
-| `Enter` | Compartment: 하위 진입 · VCN: 이 VCN 기준으로 필터링, `i`와 동일, 바로 리소스 검색창이 뜸 · 그 외: 동작 없음 |
+| `Enter` | Compartment: 상세(YAML) 보기 · VCN: 이 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커, `i`와 동일 · DRG: 이 DRG의 Attachment/Route Table/Route Distribution만 모은 피커 · 그 외: 동작 없음 |
 | `d` | 선택한 행의 상세(YAML) 보기 — 모든 리소스 종류 |
-| `Esc` | 상세 닫기 → 필터 해제 → VCN 필터 해제 → 상위 컴파트먼트로 (해당되는 첫 번째 동작 실행) |
+| `Esc` | 열려있는 창/뷰 닫기 (상세, 리소스맵, 규칙 뷰, `f` 검색 등) |
+| `Backspace` | 뒤로가기: 필터 해제 → VCN 필터 해제 → DRG 필터 해제 (해당되는 첫 번째 동작 실행) |
 | `Tab` | 다음 리소스 종류로 순환 전환 |
-| `f` / `:` | 중앙 검색창에서 리소스 종류를 검색해서 진입 |
+| `f` / `:` | 모든 리소스 종류를 2단 창(목록 + 설명)에서 검색해서 진입 |
 | `/` | 현재 목록을 이름으로 필터링 |
 | `r` | 리전 전환 (구독된 리전만) |
 | `R` | 현재 목록 새로고침 |
+| `c` | 컴파트먼트 전환 (퍼지 트리 피커) |
+| `C` | 서브트리 모드 토글 (현재 리소스를 모든 하위 컴파트먼트까지 확장 조회) |
 | `e` | 현재 화면을 CSV로 export (UTF-8 BOM 포함) |
-| `i` | *(VCN 행에서)* 모든 VCN-scoped 리소스를 이 VCN 기준으로 필터링, `Enter`와 동일, 바로 리소스 검색창이 뜸 |
-| `v` | *(Security List 행에서)* ingress/egress 규칙을 표로 보기 |
+| `i` | *(VCN 또는 DRG 행에서)* 그 행에서의 `Enter`와 동일 |
+| `v` | *(Security List/Route Table/NSG/DRG Route Table 행에서)* 그 규칙(ingress/egress 또는 route)을 화면 하단에 표로 띄우기 |
 | `m` | *(VCN 필터가 걸려있을 때)* 그 VCN의 구성도를 Mermaid로 export |
 | `M` | *(VCN 필터가 걸려있을 때)* 그 VCN의 리소스 맵(서브넷/라우팅 테이블/네트워크 연결) 보기 |
 | `a` | *(Instance, `--write` 필요)* 액션 메뉴 — start/stop, 타이핑 확인 필요 |

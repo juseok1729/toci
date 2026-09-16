@@ -29,13 +29,14 @@ Read-only by default. Write actions (instance start/stop, Bastion SSH sessions) 
 
 ## Features
 
-- **Resource search** — press `f` for a centered fuzzy picker over every resource kind, jump straight to one.
-- **Compartment navigation** — lazy drill-down (`Enter` to descend, `Esc` to go up), no tenancy-wide `inspect` permission required.
-- **VCN-scoped filtering** — pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
-- **12 resource kinds**: Compartments, Instances, VCNs, Subnets, Route Tables, Security Lists, NSGs, DRGs, Load Balancers, DB Systems, Autonomous Databases, Exadata VM Clusters.
+- **Resource search** — press `f` for a two-pane fuzzy picker (list + description) over every resource kind, jump straight to one.
+- **Compartment switching** — press `c` for a fuzzy compartment tree picker; Compartments themselves are an info-only view (`Enter`/`d` shows detail).
+- **VCN/DRG-scoped pickers** — `Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions.
+- **VCN-scoped filtering** — pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists, NSGs, Instances, Load Balancers, Internet/NAT/Service Gateways, OKE Clusters, DB Systems, Autonomous DBs, Exadata VM Clusters) filters down to just that VCN.
+- **23 resource kinds** across Compute, Network, Gateways, Storage, Containers, and Database — see the `f` search for the full, categorized list.
 - **Instance table** with live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, OS image version, subnet, public/private IP, and a colored STATE column (every resource kind gets green/red/yellow text for healthy/failed/needs-attention states — see [docs/COLOR_SYSTEM.md](docs/COLOR_SYSTEM.md)).
-- **Security List rule viewer** — ingress/egress rules as a readable table instead of raw nested YAML.
-- **CSV export** (UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including the Security List rules table.
+- **Rules viewer** — `v` on a Security List/Route Table/NSG/DRG Route Table row floats its ingress/egress or route rules as a table over the bottom of the screen, instead of raw nested YAML.
+- **CSV export** (UTF-8 BOM, opens cleanly in Excel) for whatever's currently on screen — including a rules table.
 - **Mermaid diagram export** — generates a `.mmd` flowchart (`graph TD` + nested `subgraph`) of a VCN's subnets, the Instances/DB Systems/Autonomous DBs/Exadata VM Clusters in each, and any DRGs attached to the VCN.
 - **Resource map** — an in-app, AWS-console-style view of a VCN's Subnets, the Route Tables they use, and the Internet/NAT/Service/Local Peering Gateways and DRGs those route tables target, connected column to column.
 - **LazyVim-style shortcuts popup** — press `space` for a which-key-style overlay of every binding that applies to the current screen.
@@ -128,24 +129,25 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 ./toci --profile DEV --write                # enable write actions (instance start/stop, Bastion SSH)
 ```
 
-On startup you'll land on the tenancy root's Compartments list. Drill down with `Enter`; if a compartment has no sub-compartments, toci lands you on its VCNs instead.
-
 ## Key Bindings
 
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrow keys) | Move up/down |
-| `Enter` | Compartment: descend · VCN: filter all VCN-scoped resources to it, same as `i`, then opens the resource search to pick one · everything else: no-op |
+| `Enter` | Compartment: view detail (YAML) · VCN: float a picker over its Subnets/Route Tables/Security Lists/Gateways, same as `i` · DRG: float a picker over its Attachments/Route Tables/Route Distributions · everything else: no-op |
 | `d` | View detail (YAML) for the selected row, any resource kind |
-| `Esc` | Close detail → clear filter → back out of a VCN filter → go up a compartment (whichever applies first) |
+| `Esc` | Close whatever window/view is open (detail, resource map, rules view, the `f` search, ...) |
+| `Backspace` | Go back: clear the filter → back out of a VCN filter → back out of a DRG filter (whichever applies first) |
 | `Tab` | Cycle to the next resource kind |
-| `f` / `:` | Search resource kinds in a centered picker and jump to one |
+| `f` / `:` | Search every resource kind in a two-pane picker (list + description) and jump to one |
 | `/` | Filter the current list by name |
 | `r` | Switch region (subscribed regions only) |
 | `R` | Refresh the current list |
+| `c` | Switch compartment (fuzzy tree picker) |
+| `C` | Toggle subtree mode (fan the current resource out across every sub-compartment) |
 | `e` | Export the current view to CSV (UTF-8 BOM) |
-| `i` | *(on a VCN row)* Filter all VCN-scoped resources to this VCN, same as `Enter`, then opens the resource search to pick one |
-| `v` | *(on a Security List row)* View ingress/egress rules as a table |
+| `i` | *(on a VCN or DRG row)* Same as `Enter` on that row |
+| `v` | *(on a Security List/Route Table/NSG/DRG Route Table row)* Float its rules (ingress/egress or route rules) as a table over the bottom of the screen |
 | `m` | *(with a VCN filter active)* Export a Mermaid diagram of the VCN's topology |
 | `M` | *(with a VCN filter active)* View the VCN's resource map (Subnets/Route Tables/Network Connections) |
 | `a` | *(Instance, `--write` only)* Action menu — start/stop, with a type-to-confirm prompt |
