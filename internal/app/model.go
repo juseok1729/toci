@@ -1430,6 +1430,31 @@ func (m Model) actionable() (registry.Actionable, bool) {
 	return a, ok
 }
 
+// openActionPicker floats the write-action picker (start/stop, ...) for
+// row — Enter's default behavior (updateTable) on any row whose resource
+// kind is Actionable (currently just Instances). Checked before
+// writeEnabled so Enter stays a silent no-op on every non-actionable
+// resource in readonly mode too, instead of claiming actions are merely
+// "disabled" on rows that never had any to begin with.
+func (m *Model) openActionPicker(row registry.Row) {
+	a, ok := m.actionable()
+	if !ok {
+		return
+	}
+	if !m.writeEnabled {
+		m.statusMsg = "actions disabled (readonly mode; pass --write to enable)"
+		return
+	}
+	specs := a.Actions()
+	items := make([]pickerItem, len(specs))
+	for i, spec := range specs {
+		items[i] = pickerItem{key: spec.Key, label: spec.Label}
+	}
+	m.pendingRow = row
+	m.picker = newPicker(pickerAction, "action: "+row.Name, items)
+	m.mode = modePicker
+}
+
 func (m Model) runAction(spec registry.ActionSpec, row registry.Row) tea.Cmd {
 	a, ok := m.actionable()
 	if !ok {
@@ -2422,29 +2447,6 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		e := m.recentList[idx]
 		return m, m.switchCompartment(e.ID, e.Name, boolPtr(e.Subtree))
 
-	case "a":
-		if !m.writeEnabled {
-			m.statusMsg = "actions disabled (readonly mode; pass --write to enable)"
-			return m, nil
-		}
-		a, ok := m.actionable()
-		if !ok {
-			return m, nil
-		}
-		row, ok := m.selected()
-		if !ok {
-			return m, nil
-		}
-		specs := a.Actions()
-		items := make([]pickerItem, len(specs))
-		for i, spec := range specs {
-			items[i] = pickerItem{key: spec.Key, label: spec.Label}
-		}
-		m.pendingRow = row
-		m.picker = newPicker(pickerAction, "action: "+row.Name, items)
-		m.mode = modePicker
-		return m, nil
-
 	case "s":
 		if !m.writeEnabled {
 			m.statusMsg = "ssh disabled (readonly mode; pass --write to enable)"
@@ -2601,10 +2603,12 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectVcnFilter(row.ID, row.Name, row.CompartmentID)
 		case "drg":
 			m.selectDrgFilter(row.ID, row.Name, row.CompartmentID)
+		default:
+			m.openActionPicker(row)
 		}
 		return m, nil
 
-	// esc's job is closing a floating window/view (the "f" search, "M"
+	// esc's job is closing a floating window/view (the ":" search, "M"
 	// resource map, "v" rules view, ...) — modeTable's own key handling
 	// here never has one of those open (they're their own modes), so
 	// there's nothing for esc to do. Clearing scope/filters and cancelling
@@ -2724,7 +2728,7 @@ func (m Model) viewContent() string {
 	// would wrongly blank the table out from under them — render as if
 	// modeTable and overlay them after composing the full view below.
 	renderMode := m.mode
-	if renderMode == modePicker && (m.picker.kind == pickerResource || m.picker.kind == pickerCompartment) {
+	if renderMode == modePicker && (m.picker.kind == pickerResource || m.picker.kind == pickerCompartment || m.picker.kind == pickerAction) {
 		renderMode = modeTable
 	}
 	if renderMode == modeDetail && (m.resourceMap != nil || m.rulesOverlay) {
@@ -2821,6 +2825,9 @@ func (m Model) viewContent() string {
 	}
 	if m.mode == modePicker && m.picker.kind == pickerCompartment {
 		out = overlayCenter(out, m.renderCompartmentPicker(), m.width, m.height)
+	}
+	if m.mode == modePicker && m.picker.kind == pickerAction {
+		out = overlayCenter(out, m.renderPicker(), m.width, m.height)
 	}
 	if m.mode == modeDetail && m.resourceMap != nil {
 		out = overlayBottom(out, m.renderResourceMapOverlayBox(), m.width)
