@@ -73,7 +73,7 @@ func TestResourcePickerItemsFuzzyFilterPreservesCategoryOrder(t *testing.T) {
 		}
 	}
 
-	wantOrder := []string{"Compute", "Network", "Storage", "Containers", "Database", "Governance"} // resourceCategories' own declared order
+	wantOrder := []string{"Compute", "Network", "Gateways", "Storage", "Containers", "Database", "Governance"} // resourceCategories' own declared order
 	i := 0
 	for _, w := range wantOrder {
 		if i < len(order) && order[i] == w {

@@ -20,6 +20,10 @@ var resourceCategories = []struct {
 		"drg", "drg-attachment", "drg-route-table", "drg-route-distribution",
 		"lb",
 	}},
+	// "Gateways" first entry is the combined view (GatewayResource) — every
+	// Internet/NAT/Service gateway merged into one list — followed by each
+	// type on its own, for picking just one.
+	{"Gateways", []string{"gateway", "igw", "nat-gateway", "service-gateway"}},
 	{"Storage", []string{"file-system", "bucket"}},
 	{"Containers", []string{"oke"}},
 	{"Database", []string{"db-system", "adb", "exadata", "exascale"}},
