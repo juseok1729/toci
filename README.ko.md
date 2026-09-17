@@ -72,6 +72,12 @@ Compute, Network, Gateways, Storage, Containers, Database 카테고리로 나뉘
 </details>
 
 <details>
+<summary><strong>컬럼 정렬</strong></summary>
+
+`←`/`→`로 헤더의 강조 표시(로우 커서와는 다른 색상)를 좌우로 옮기고, `o`로 강조된 컬럼 기준 정렬 — 오름차순 → 내림차순 → 해제 순으로 순환합니다.
+</details>
+
+<details>
 <summary><strong>규칙 뷰어</strong></summary>
 
 Security List/Route Table/NSG/DRG Route Table 행에서 `v`를 누르면 ingress/egress 또는 route 규칙을 화면 하단에 표 형태로 띄워줍니다(중첩된 YAML 대신).
@@ -211,6 +217,8 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 | `Tab` | 다음 리소스 종류로 순환 전환 |
 | `:` | 모든 리소스 종류를 2단 창(목록 + 설명)에서 검색해서 진입 |
 | `/` | 현재 목록을 이름으로 필터링 |
+| `←` / `→` | 컬럼 정렬 커서(헤더에 강조 표시) 좌우 이동 |
+| `o` | 강조된 컬럼으로 정렬: 오름차순 → 내림차순 → 해제 |
 | `r` | 리전 전환 (구독된 리전만) |
 | `R` | 현재 목록 새로고침 |
 | `c` | 컴파트먼트 전환 (퍼지 트리 피커) |

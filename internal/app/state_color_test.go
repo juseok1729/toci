@@ -24,6 +24,78 @@ func TestColumnRangeFindsNamedColumn(t *testing.T) {
 	}
 }
 
+func TestColumnRangeAtFindsColumnByIndex(t *testing.T) {
+	cols := []table.Column{{Title: "NAME", Width: 10}, {Title: "STATE", Width: 8}}
+	start, end, ok := columnRangeAt(cols, 1)
+	if !ok || start != 12 || end != 22 {
+		t.Fatalf("columnRangeAt(1) = %d,%d,%v, want 12,22,true", start, end, ok)
+	}
+	if _, _, ok := columnRangeAt(cols, 2); ok {
+		t.Fatalf("columnRangeAt(2) = ok, want out-of-range not found")
+	}
+	if _, _, ok := columnRangeAt(cols, -1); ok {
+		t.Fatalf("columnRangeAt(-1) = ok, want not found")
+	}
+}
+
+// bubblesCell mirrors bubbles table.Model's own header/data cell layout
+// (Width(N) then Padding(0,1) — see headersView/renderRow) so fixtures here
+// match the real column spans columnRangeAt's "col.Width + 2" assumes,
+// instead of hand-counted spacing that can silently drift from it.
+func bubblesCell(text string, width int) string {
+	return lipgloss.NewStyle().Padding(0, 1).Render(
+		lipgloss.NewStyle().Width(width).MaxWidth(width).Inline(true).Render(text),
+	)
+}
+
+func TestColorizeSortColumnHeaderHighlightsSelectedColumnOnly(t *testing.T) {
+	cols := []table.Column{{Title: "NAME", Width: 6}, {Title: "STATE", Width: 7}}
+	header := bubblesCell("NAME", 6) + bubblesCell("STATE", 7)
+	data := bubblesCell("web11", 6) + bubblesCell("RUNNING", 7)
+	view := header + "\n" + data + "\n"
+
+	// Highlighted (sort cursor) but not the active sort column: colored,
+	// no arrow.
+	got := colorizeSortColumnHeader(view, cols, 0, false, false)
+	lines := strings.Split(got, "\n")
+	if !strings.Contains(lines[0], "NAME") || !strings.Contains(lines[0], "38;2;184;134;11") {
+		t.Errorf("highlighted header should be recolored, got %q", lines[0])
+	}
+	if strings.Contains(lines[0], "▲") || strings.Contains(lines[0], "▼") {
+		t.Errorf("non-active column shouldn't show a direction arrow, got %q", lines[0])
+	}
+	if strings.Contains(ansi.Strip(lines[0]), "STATE") == false {
+		t.Errorf("the other column's header text should be untouched, got %q", lines[0])
+	}
+	if lines[1] != data {
+		t.Errorf("data row should be untouched, got %q, want %q", lines[1], data)
+	}
+	if w := ansi.StringWidth(lines[0]); w != ansi.StringWidth(header) {
+		t.Errorf("header width after colorizing = %d, want %d (unchanged — must stay aligned with the data rows below it)", w, ansi.StringWidth(header))
+	}
+
+	// Active sort column: colored plus the direction arrow.
+	gotDesc := colorizeSortColumnHeader(view, cols, 1, true, true)
+	linesDesc := strings.Split(gotDesc, "\n")
+	if !strings.Contains(linesDesc[0], "▼") {
+		t.Errorf("active descending column should show ▼, got %q", linesDesc[0])
+	}
+	if w := ansi.StringWidth(linesDesc[0]); w != ansi.StringWidth(header) {
+		t.Errorf("header width with an arrow appended = %d, want %d (the arrow must fit within the column's existing width, not widen it)", w, ansi.StringWidth(header))
+	}
+	gotAsc := colorizeSortColumnHeader(view, cols, 1, true, false)
+	if !strings.Contains(gotAsc, "▲") {
+		t.Errorf("active ascending column should show ▲, got %q", gotAsc)
+	}
+
+	if _, _, ok := columnRangeAt(cols, 5); ok {
+		t.Fatal("sanity: out-of-range index shouldn't resolve")
+	}
+	if got := colorizeSortColumnHeader(view, cols, 5, false, false); got != view {
+		t.Errorf("out-of-range idx should leave view unchanged, got %q", got)
+	}
+}
+
 func TestBlinkRecentRowsOnlyPaintsMatchingRowsWhenOn(t *testing.T) {
 	cols := []table.Column{{Title: "NAME", Width: 6}, {Title: "STATE", Width: 7}}
 	view := "HEADER\n" +

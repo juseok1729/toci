@@ -312,3 +312,75 @@ func columnRange(cols []table.Column, title string) (start, end int, ok bool) {
 	}
 	return 0, 0, false
 }
+
+// columnRangeAt is columnRange addressed by position instead of title — the
+// column sort cursor (left/right in updateTable) tracks an index, and
+// several kinds have columns sharing a title after tree-decoration (see
+// vcn_tree.go), where a title lookup could land on the wrong one.
+func columnRangeAt(cols []table.Column, idx int) (start, end int, ok bool) {
+	if idx < 0 || idx >= len(cols) {
+		return 0, 0, false
+	}
+	offset := 0
+	for i, c := range cols {
+		span := c.Width + 2
+		if i == idx {
+			return offset, offset + span, true
+		}
+		offset += span
+	}
+	return 0, 0, false
+}
+
+// sortColumnHeaderColor is a deep goldenrod — a darker, more saturated
+// shade of the header's own default gold (ociHighlt, #e8c878) rather than
+// an unrelated hue, so the highlighted header still reads as "a header",
+// just a more emphatic one. Tried splashLogoStyle's red first, but that
+// sits too close to stateTextBad/editionColorEEEP's own reds/pinks on a
+// STATE- or edition-heavy table, making the highlight read as a state
+// warning instead of a sort cursor.
+const sortColumnHeaderColor = "#b8860b"
+
+// sortColumnHeaderStyle is the column-sort cursor's highlight — distinct
+// from the header's own default gold (see tableStyles), the row cursor's
+// green (selStyle), and every state/edition color already in play on a
+// data row (state_color.go, edition_color.go).
+var sortColumnHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(sortColumnHeaderColor))
+
+// colorizeSortColumnHeader recolors the header cell of the column at idx —
+// the "o"/left-right column sort cursor's current position (see
+// updateTable) — instead of a data column's values the way colorizeState
+// does. active (this is the column actually being sorted, not just
+// highlighted) additionally appends a ▲/▼ direction arrow per desc.
+//
+// Rebuilds the cell from scratch with the same Width+Padding(0,1) shape
+// bubbles' own headersView uses, rather than splicing color into the
+// existing rendered text the way colorizeState does — headersView already
+// truncates long titles to fit Width, and an appended arrow needs to
+// re-truncate against that same width, which is simplest starting fresh.
+func colorizeSortColumnHeader(view string, cols []table.Column, idx int, active bool, desc bool) string {
+	start, end, ok := columnRangeAt(cols, idx)
+	if !ok {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 {
+		return view
+	}
+	label := cols[idx].Title
+	if active {
+		arrow := "▲"
+		if desc {
+			arrow = "▼"
+		}
+		label += " " + arrow
+	}
+	cell := lipgloss.NewStyle().Width(cols[idx].Width).MaxWidth(cols[idx].Width).Inline(true).
+		Render(ansi.Truncate(label, cols[idx].Width, "…"))
+	rendered := sortColumnHeaderStyle.Padding(0, 1).Render(cell)
+
+	left := ansi.Cut(lines[0], 0, start)
+	right := ansi.Cut(lines[0], end, 1<<20)
+	lines[0] = left + rendered + right
+	return strings.Join(lines, "\n")
+}

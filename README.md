@@ -72,6 +72,12 @@ live CPU%/MEM% (OCI Monitoring), OCPU/memory spec, OS image version, subnet, pub
 </details>
 
 <details>
+<summary><strong>Column sort</strong></summary>
+
+`←`/`→` moves a highlight across the header (colored, distinct from the row cursor); `o` sorts by the highlighted column, cycling ascending → descending → off.
+</details>
+
+<details>
 <summary><strong>Rules viewer</strong></summary>
 
 `v` on a Security List/Route Table/NSG/DRG Route Table row floats its ingress/egress or route rules as a table over the bottom of the screen, instead of raw nested YAML.
@@ -211,6 +217,8 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 | `Tab` | Cycle to the next resource kind |
 | `:` | Search every resource kind in a two-pane picker (list + description) and jump to one |
 | `/` | Filter the current list by name |
+| `←` / `→` | Move the column-sort cursor (highlighted in the header) left/right |
+| `o` | Sort by the highlighted column: ascending → descending → off |
 | `r` | Switch region (subscribed regions only) |
 | `R` | Refresh the current list |
 | `c` | Switch compartment (fuzzy tree picker) |

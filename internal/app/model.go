@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,6 +167,20 @@ type Model struct {
 	displayRows []registry.Row
 	filterQuery string
 	filterBak   string
+
+	// sortCursorCol is which column header left/right currently highlights
+	// (see colorizeSortColumnHeader) — independent of sortActive/sortCol
+	// below, so moving the highlight around previews a candidate without
+	// touching whatever's actually sorted until "o" confirms it.
+	sortCursorCol int
+	// sortActive/sortCol/sortDesc describe the column actually being
+	// sorted by — sortActive false (its zero value, so every Model built
+	// as a plain struct literal in tests stays in natural List() order
+	// with no extra setup) means unsorted. "o" on the highlighted column
+	// cycles sortActive/sortDesc through ascending -> descending -> off.
+	sortActive bool
+	sortCol    int
+	sortDesc   bool
 
 	table       table.Model
 	detail      viewport.Model
@@ -973,6 +989,12 @@ func (m *Model) setDisplayRows() {
 		// match on Name like anything else, so they'd otherwise wink in
 		// and out of a filtered view depending on how the placeholder text
 		// happens to score — keep them out of the filter and always shown.
+		// Sorting applies only to the already-loaded `real` rows for the
+		// same reason: a placeholder's column values are just the "—
+		// loading —" text, meaningless to sort by, and they always belong
+		// at the end regardless of sort order (visually distinct from the
+		// resolved rows above them) rather than sorting in wherever their
+		// placeholder text would land.
 		var placeholders []registry.Row
 		var real []registry.Row
 		for _, r := range m.buildSubtreeRows() {
@@ -982,9 +1004,12 @@ func (m *Model) setDisplayRows() {
 				real = append(real, r)
 			}
 		}
-		rows = append(applyFilter(real, m.filterQuery), placeholders...)
+		real = applyFilter(real, m.filterQuery)
+		real = m.applyColumnSort(real)
+		rows = append(real, placeholders...)
 	} else {
 		rows = applyFilter(m.rows, m.filterQuery)
+		rows = m.applyColumnSort(rows)
 	}
 	if m.groupingActive() {
 		rows = groupRowsByVcn(rows, m.vcnNames)
@@ -997,6 +1022,53 @@ func (m *Model) setDisplayRows() {
 	}
 	m.displayRows = rows
 	m.refreshTable(m.displayRows)
+}
+
+// applyColumnSort reorders rows by the active sort column (left/right +
+// "o" — see updateTable), or returns rows unchanged if none is active.
+// SliceStable so rows that tie on the sort column keep List()'s own
+// relative order instead of shuffling on every re-sort.
+func (m *Model) applyColumnSort(rows []registry.Row) []registry.Row {
+	if !m.sortActive {
+		return rows
+	}
+	cols := m.displayColumns()
+	if m.sortCol < 0 || m.sortCol >= len(cols) {
+		return rows
+	}
+	get := cols[m.sortCol].Get
+	sorted := make([]registry.Row, len(rows))
+	copy(sorted, rows)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		c := compareCellText(get(sorted[i]), get(sorted[j]))
+		if m.sortDesc {
+			return c > 0
+		}
+		return c < 0
+	})
+	return sorted
+}
+
+// compareCellText orders two rendered cell values numerically when both
+// parse as plain numbers (most numeric columns — OCPU, MEM(GB), counts —
+// render without units), falling back to a case-insensitive string
+// comparison otherwise (so e.g. IP columns and free-text ones like NAME
+// still sort sensibly instead of numerically-styled columns like "10"
+// sorting before "2").
+func compareCellText(a, b string) int {
+	af, aerr := strconv.ParseFloat(strings.TrimSpace(a), 64)
+	bf, berr := strconv.ParseFloat(strings.TrimSpace(b), 64)
+	if aerr == nil && berr == nil {
+		switch {
+		case af < bf:
+			return -1
+		case af > bf:
+			return 1
+		default:
+			return 0
+		}
+	}
+	return strings.Compare(strings.ToLower(a), strings.ToLower(b))
 }
 
 // mainAbsFloor is the main panel's true minimum width.
@@ -1302,6 +1374,11 @@ func (m *Model) reloadCurrent() tea.Cmd {
 	m.filterQuery = ""
 	m.loading = true
 	m.err = nil
+	// A column index carries no meaning across resource kinds (column 3
+	// might be PUBLIC IP here and something unrelated there) — same reset
+	// as filterQuery above, on every switchResource/navigateBack.
+	m.sortActive = false
+	m.sortCursorCol = 0
 	// Subtree mode (F3) fans out across every compartment in scope for
 	// whatever resource is selected — switching resource re-fans-out
 	// instead of a plain single-compartment load. startSubtreeFanout
@@ -2586,6 +2663,55 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// left/right only move which column header is highlighted (see
+	// colorizeSortColumnHeader) — a preview of what "o" would sort by,
+	// same as moving the row cursor doesn't act on a row by itself.
+	case "left":
+		if n := len(m.displayColumns()); n > 0 && m.sortCursorCol > 0 {
+			m.sortCursorCol--
+		}
+		return m, nil
+
+	case "right":
+		if n := len(m.displayColumns()); n > 0 && m.sortCursorCol < n-1 {
+			m.sortCursorCol++
+		}
+		return m, nil
+
+	// "o" ("order by") is the confirm step left/right's highlight is
+	// building toward: cycles the highlighted column through ascending ->
+	// descending -> back to unsorted (natural List() order), rather than
+	// sorting on every left/right move, which would reorder the table out
+	// from under a cursor that was just trying to preview a column.
+	case "o":
+		cols := m.displayColumns()
+		if len(cols) == 0 {
+			return m, nil
+		}
+		if m.sortCursorCol >= len(cols) {
+			m.sortCursorCol = len(cols) - 1
+		}
+		switch {
+		case !m.sortActive || m.sortCol != m.sortCursorCol:
+			m.sortActive = true
+			m.sortCol = m.sortCursorCol
+			m.sortDesc = false
+		case !m.sortDesc:
+			m.sortDesc = true
+		default:
+			m.sortActive = false
+		}
+		m.setDisplayRows()
+		switch {
+		case !m.sortActive:
+			m.statusMsg = "sort: off (" + cols[m.sortCursorCol].Header + ")"
+		case m.sortDesc:
+			m.statusMsg = "sorted by " + cols[m.sortCol].Header + " (desc)"
+		default:
+			m.statusMsg = "sorted by " + cols[m.sortCol].Header + " (asc)"
+		}
+		return m, nil
+
 	case "g":
 		switch m.current().Key() {
 		case "subnet":
@@ -3068,6 +3194,7 @@ func (m Model) viewContent() string {
 			if m.blinkEnabled {
 				tableView = blinkRecentRows(tableView, m.table.Columns(), m.recentRowNames(), m.blinkOn)
 			}
+			tableView = colorizeSortColumnHeader(tableView, m.table.Columns(), m.sortCursorCol, m.sortActive && m.sortCol == m.sortCursorCol, m.sortDesc)
 			main.WriteString(m.renderTableBox(tableView))
 		}
 		main.WriteString("\n")
@@ -3720,6 +3847,8 @@ func (m Model) helpEntries() []helpEntry {
 	} else if m.vcnFilterName != "" || m.drgFilterName != "" {
 		add("⌫", "", "up")
 	}
+	add("←/→", "", "select column")
+	add("o", "", "sort column")
 	add("q", "", "quit")
 	return entries
 }
