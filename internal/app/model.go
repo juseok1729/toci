@@ -2924,7 +2924,14 @@ const (
 func (m Model) View() tea.View {
 	v := tea.NewView(m.viewContent())
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	// Mouse tracking stays off during an embedded SSH session: with it on,
+	// the real terminal emulator routes mouse drags to us as click/motion
+	// events instead of letting its own native drag-to-copy selection see
+	// them, breaking copy inside the remote shell. Every other mode still
+	// wants it on for toci's own row/menu clicks.
+	if m.mode != modeEmbeddedTerm {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	if m.mode == modeEmbeddedTerm && m.embTerm != nil && m.embTerm.scrollback == 0 {
 		// ponytail: always a blinking block cursor — doesn't track the
 		// remote app's own hide-cursor/shape requests (vt.Callbacks'
