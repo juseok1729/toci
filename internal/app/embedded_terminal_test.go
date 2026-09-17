@@ -144,3 +144,47 @@ func TestViewHidesCursorOutsideEmbeddedTermMode(t *testing.T) {
 		t.Errorf("Cursor = %+v, want nil outside modeEmbeddedTerm", v.Cursor)
 	}
 }
+
+// TestViewDisablesMouseTrackingInEmbeddedTermMode reproduces a reported
+// bug: toci's own mouse tracking (needed elsewhere for row/menu clicks)
+// stayed on inside an ssh session too, which made the real terminal route
+// mouse drags to us instead of its own native drag-to-copy selection.
+// TestRenderCapturesCursorPositionAlongsideContent reproduces a reported
+// bug: View() used to call emu.CursorPosition() on its own, well after
+// render() had already captured the content — long enough (building the
+// rest of the screen) for the readLoop goroutine to write more pty output
+// into the emulator in between, most visible right when a burst of output
+// (e.g. `history`) overflows the box and scrolls several lines through in
+// quick succession. That gap is closed by having render() itself capture
+// lastCursor in the same breath as the content it returns.
+func TestRenderCapturesCursorPositionAlongsideContent(t *testing.T) {
+	cols, rows := 20, 5
+	emu := vt.NewSafeEmulator(cols, rows)
+	emu.Write([]byte("xy\r\nabc"))
+	et := &embeddedTerm{emu: emu}
+
+	et.render(rows)
+
+	want := emu.CursorPosition()
+	if et.lastCursor != want {
+		t.Errorf("lastCursor = %+v, want %+v (emu's cursor position as of the render() call)", et.lastCursor, want)
+	}
+	if want.X != 3 || want.Y != 1 {
+		t.Fatalf("test setup: cursor at %+v, want (3, 1) after writing \"xy\\r\\nabc\"", want)
+	}
+}
+
+func TestViewDisablesMouseTrackingInEmbeddedTermMode(t *testing.T) {
+	m := newEmbTermTestModel(t)
+	cols, rows := m.embTermSize()
+	m.embTerm = &embeddedTerm{emu: vt.NewSafeEmulator(cols, rows)}
+
+	if v := m.View(); v.MouseMode != tea.MouseModeNone {
+		t.Errorf("MouseMode = %v, want MouseModeNone inside an embedded ssh session", v.MouseMode)
+	}
+
+	m.mode = modeTable
+	if v := m.View(); v.MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("MouseMode = %v, want MouseModeCellMotion outside modeEmbeddedTerm", v.MouseMode)
+	}
+}

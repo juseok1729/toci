@@ -2939,7 +2939,13 @@ func (m Model) View() tea.View {
 		// those callbacks in startEmbeddedTerm and store the result on
 		// embeddedTerm if a full-screen remote app (vim, less) hiding its
 		// cursor turns out to matter in practice.
-		pos := m.embTerm.emu.CursorPosition()
+		//
+		// Reads lastCursor (captured by render(), inside viewContent()
+		// above) rather than calling emu.CursorPosition() fresh here —
+		// see its doc comment for why a second, separately-timed call
+		// could land on a cursor position newer than the content already
+		// drawn from render()'s own snapshot.
+		pos := m.embTerm.lastCursor
 		v.Cursor = tea.NewCursor(pos.X+embTermContentCol, pos.Y+embTermContentRow)
 	}
 	return v

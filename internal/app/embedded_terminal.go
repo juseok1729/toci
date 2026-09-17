@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	vt "github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 )
@@ -37,6 +38,19 @@ type embeddedTerm struct {
 	// normal state). Only meaningful outside the remote app's alt screen;
 	// see render.
 	scrollback int
+
+	// lastCursor is the emulator's cursor position as of the most recent
+	// render() call — View() reads this instead of calling
+	// emu.CursorPosition() again on its own, separately, after building
+	// the rest of the screen (header, etc). That gap gave the readLoop
+	// goroutine, writing pty output straight into the emulator
+	// concurrently, room to advance the cursor past what render() had
+	// already captured — most visible right when a burst of output (e.g.
+	// `history`) overflows the box and scrolls several lines in quick
+	// succession, landing the drawn cursor a row or more off from the
+	// content actually on screen. Capturing both right next to each
+	// other narrows that window to the same two calls, back to back.
+	lastCursor uv.Position
 }
 
 // startEmbeddedTerm launches shellCmd (via "sh -c") attached to a new pty
@@ -176,7 +190,9 @@ func (et *embeddedTerm) resetScroll() {
 // of scrollback lines and the top of the live screen when scrolled up.
 func (et *embeddedTerm) render(rows int) string {
 	if et.scrollback == 0 {
-		return et.emu.Render()
+		s := et.emu.Render()
+		et.lastCursor = et.emu.CursorPosition()
+		return s
 	}
 	sb := et.emu.Scrollback()
 	sbLen := sb.Len()
