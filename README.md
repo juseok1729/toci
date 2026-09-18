@@ -42,9 +42,9 @@ press `c` for a fuzzy compartment tree picker; Compartments themselves are an in
 </details>
 
 <details>
-<summary><strong>VCN/DRG/OKE-scoped pickers</strong></summary>
+<summary><strong>VCN/DRG/OKE/Load Balancer-scoped pickers</strong></summary>
 
-`Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions; an OKE row floats a menu for its Node Pools (`g` expands each pool into a tree of its worker nodes) or Add-ons (installed add-ons and their status).
+`Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions; an OKE row floats a menu for its Node Pools (`g` expands each pool into a tree of its worker nodes) or Add-ons (installed add-ons and their status); a Load Balancer row floats a menu for its Listeners, Backend Sets, Routing Policies, Rule Sets, Path Route Sets, Certificates, and Hostnames.
 </details>
 
 <details>
@@ -54,7 +54,7 @@ pick a VCN and every VCN-scoped resource (Subnets, Route Tables, Security Lists,
 </details>
 
 <details>
-<summary><strong>25 resource kinds</strong></summary>
+<summary><strong>32 resource kinds</strong></summary>
 
 across Compute, Network, Gateways, Storage, Containers, and Database — see the `:` search for the full, categorized list.
 </details>
@@ -210,7 +210,7 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or arrow keys) | Move up/down |
-| `Enter` | Compartment: view detail (YAML) · VCN: float a picker over its Subnets/Route Tables/Security Lists/Gateways, same as `i` · DRG: float a picker over its Attachments/Route Tables/Route Distributions · OKE: float a menu for its Node Pools or Add-ons · Instance (`--write` only): float the action menu (start/stop, with a type-to-confirm prompt) · everything else: no-op |
+| `Enter` | Compartment: view detail (YAML) · VCN: float a picker over its Subnets/Route Tables/Security Lists/Gateways, same as `i` · DRG: float a picker over its Attachments/Route Tables/Route Distributions · OKE: float a menu for its Node Pools or Add-ons · Load Balancer: float a menu for its Listeners/Backend Sets/Routing Policies/Rule Sets/Path Route Sets/Certificates/Hostnames · Instance (`--write` only): float the action menu (start/stop, with a type-to-confirm prompt) · everything else: no-op |
 | `d` | View detail (YAML) for the selected row, any resource kind |
 | `Esc` | Close whatever window/view is open (detail, resource map, rules view, the `:` search, ...) |
 | `Backspace` | Go back: clear the filter, then step back through the resources you've actually visited one at a time (e.g. VCN → Subnet → DB System → Subnet → VCN) |
@@ -224,7 +224,7 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 | `c` | Switch compartment (fuzzy tree picker) |
 | `C` | Toggle subtree mode (fan the current resource out across every sub-compartment) |
 | `e` | Export the current view to CSV (UTF-8 BOM) |
-| `i` | *(on a VCN, DRG, or OKE row)* Same as `Enter` on that row |
+| `i` | *(on a VCN, DRG, OKE, or Load Balancer row)* Same as `Enter` on that row |
 | `v` | *(on a Security List/Route Table/NSG/DRG Route Table row)* Float its rules (ingress/egress or route rules) as a table over the bottom of the screen |
 | `m` | *(with a VCN filter active)* Export a Mermaid diagram of the VCN's topology |
 | `M` | *(with a VCN filter active)* View the VCN's resource map (Subnets/Route Tables/Network Connections) |

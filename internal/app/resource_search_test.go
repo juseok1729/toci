@@ -83,9 +83,23 @@ func TestRenderResourceSearch(t *testing.T) {
 	if !strings.Contains(out, wantCount) {
 		t.Errorf("renderResourceSearch missing match count %q\nfull box:\n%s", wantCount, out)
 	}
-	for _, category := range []string{"Compute", "Network", "Gateways", "Storage", "Containers", "Database", "Governance"} {
+	// The full pool (resourceSearchVisibleRows caps at 34 rows, by design —
+	// see its own doc — regardless of m.height) no longer fits on screen at
+	// once now that Network's LB-scoped resources have grown it past that
+	// cap, so the first few categories are checked at the top of the list
+	// (cursor 0, the default) and the rest after scrolling to the very
+	// last item, rather than expecting every category in one unscrolled
+	// render.
+	for _, category := range []string{"Compute", "Network"} {
 		if !strings.Contains(out, category) {
 			t.Errorf("renderResourceSearch missing category header %q\nfull box:\n%s", category, out)
+		}
+	}
+	m.picker.cursor = len(m.picker.filtered) - 1
+	outBottom := ansi.Strip(m.renderResourceSearch())
+	for _, category := range []string{"Gateways", "Storage", "Containers", "Database", "Governance"} {
+		if !strings.Contains(outBottom, category) {
+			t.Errorf("renderResourceSearch (scrolled to the last item) missing category header %q\nfull box:\n%s", category, outBottom)
 		}
 	}
 }
@@ -139,6 +153,46 @@ func TestResourceSearchSplashYIsStableAcrossItemCount(t *testing.T) {
 	wantY := (40 - (resourceSearchSplashAnchorItems + pickerResourceItemsTop + 2)) / 4
 	if got := large.resourceSearchY(); got != wantY {
 		t.Errorf("resourceSearchY() = %d, want %d (height=40, anchor=%d)", got, wantY, resourceSearchSplashAnchorItems)
+	}
+}
+
+// TestResourceSearchTableYIsStableOnceOverVisibleCap is
+// TestResourceSearchSplashYIsStableAcrossItemCount's modeTable analog,
+// reproducing a reported bug: unlike the splash case (fixed to a frozen
+// anchor above), the box floating over the ordinary table anchored its
+// position to the picker's full, unfiltered item count with no cap at
+// all — so every resource kind ever added kept pushing the box further up
+// the screen, even long after the rendered list itself stopped growing
+// and started scrolling instead (resourceSearchVisibleRows). Once the
+// item count is past that cap, adding still more items must not move the
+// box any further.
+func TestResourceSearchTableYIsStableOnceOverVisibleCap(t *testing.T) {
+	m := Model{resources: registry.All(nil), table: newTable(20), width: 120, height: 40}
+	m.openResourceSearch()
+
+	visible := resourceSearchVisibleRows(m)
+	full := len(m.picker.treeFilter(""))
+	if visible >= full {
+		t.Fatalf("test setup: expected the full resource pool (%d) to already exceed resourceSearchVisibleRows (%d)", full, visible)
+	}
+	atCap := m.resourceSearchY()
+
+	// A second, artificially longer picker (every LB-scoped key repeated
+	// several times over) — still capped at the same
+	// resourceSearchVisibleRows(m), so its Y must land in exactly the same
+	// place as the real, already-over-the-cap one above, not further up.
+	longer := Model{resources: registry.All(nil), table: newTable(20), width: 120, height: 40}
+	var manyKeys []string
+	for i := 0; i < 10; i++ {
+		manyKeys = append(manyKeys, lbPickerResourceKeys...)
+	}
+	longer.openScopedResourceSearch("Resources", manyKeys)
+	if longerFull := len(longer.picker.treeFilter("")); longerFull <= full {
+		t.Fatalf("test setup: expected the padded pool (%d) to be longer than the real one (%d)", longerFull, full)
+	}
+
+	if got := longer.resourceSearchY(); got != atCap {
+		t.Errorf("resourceSearchY() = %d with a longer item pool, want %d (unchanged once past the visible-rows cap)", got, atCap)
 	}
 }
 

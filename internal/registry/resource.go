@@ -15,14 +15,17 @@ import (
 // Scope is the (region, compartment) pair a listing is evaluated against.
 // VcnID is an optional extra filter: when set, InstanceResource.List only
 // returns instances with a VNIC in that VCN. DrgID is the same idea for
-// DrgAttachmentResource, and OkeID for NodePoolResource — all three
-// filters are independent axes, not nested.
+// DrgAttachmentResource, OkeID for NodePoolResource, and LbID for the
+// Listener/BackendSet/Certificate/Hostname/PathRouteSet/RuleSet/
+// RoutingPolicy resources (lb_scoped.go) — all four filters are
+// independent axes, not nested.
 type Scope struct {
 	Region        string
 	CompartmentID string
 	VcnID         string
 	DrgID         string
 	OkeID         string
+	LbID          string
 }
 
 // Row is one line in a resource table. Raw holds the original SDK struct so

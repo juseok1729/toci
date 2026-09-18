@@ -21,7 +21,8 @@ var resourceCategories = []struct {
 	{"Network", []string{
 		"vcn", "subnet", "route-table", "security-list", "nsg",
 		"drg", "drg-attachment", "drg-route-table", "drg-route-distribution",
-		"lb",
+		"lb", "lb-listener", "lb-backend-set", "lb-routing-policy", "lb-rule-set",
+		"lb-path-route-set", "lb-certificate", "lb-hostname",
 	}},
 	// "Gateways" first entry is the combined view (GatewayResource) — every
 	// Internet/NAT/Service gateway merged into one list — followed by each

@@ -307,6 +307,13 @@ type Model struct {
 	// selectOkeFilter), scoping Node Pools to that cluster.
 	okeFilterName string
 
+	// lbFilterName is the Load Balancer analog of vcnFilterName/
+	// drgFilterName/okeFilterName — non-empty while scope.LbID is set via
+	// "i"/Enter on a "lb" row (see selectLbFilter), scoping Listeners/
+	// Backend Sets/Certificates/Hostnames/Path Route Sets/Rule Sets/
+	// Routing Policies to that load balancer.
+	lbFilterName string
+
 	// history is the stack of resource+scope combinations actually visited
 	// (pushed by switchResource before each switch — see navigateBack),
 	// letting Backspace step back one view at a time (VCN -> Subnet -> DB
@@ -1187,6 +1194,20 @@ func isOkeDependent(key string) bool {
 	return okeScopedResourceKeys[key]
 }
 
+// lbScopedResourceKeys is the Load Balancer analog of okeScopedResourceKeys —
+// every resource kind that only exists nested inside one load balancer
+// (see registry/lb_scoped.go).
+var lbScopedResourceKeys = map[string]bool{
+	"lb": true, "lb-listener": true, "lb-backend-set": true, "lb-routing-policy": true,
+	"lb-rule-set": true, "lb-path-route-set": true, "lb-certificate": true, "lb-hostname": true,
+}
+
+// isLbDependent reports whether switching to this resource should keep an
+// active Load Balancer filter (scope.LbID) instead of clearing it.
+func isLbDependent(key string) bool {
+	return lbScopedResourceKeys[key]
+}
+
 // groupingActive reports whether the "g" grouping column/sort should apply:
 // only the Subnet view, and only with no VCN filter (a filtered list is
 // already scoped to a single VCN, so grouping it would be a no-op).
@@ -1272,6 +1293,16 @@ var okeIDRequiredResourceKeys = map[string]bool{
 	"oke-node-pool": true,
 }
 
+// lbIDRequiredResourceKeys is drgIDRequiredResourceKeys' Load Balancer
+// analog: every one of these reads its rows off a single GetLoadBalancer
+// call (registry/lb_scoped.go's getScopedLoadBalancer), which needs an ID
+// to call at all — unlike Node Pools' merely-optional ClusterId filter,
+// there's no unscoped variant to fall back to.
+var lbIDRequiredResourceKeys = map[string]bool{
+	"lb-listener": true, "lb-backend-set": true, "lb-routing-policy": true,
+	"lb-rule-set": true, "lb-path-route-set": true, "lb-certificate": true, "lb-hostname": true,
+}
+
 // historyEntry is one previously-viewed resource+scope combination, pushed
 // by switchResource (see pushHistory) before it replaces the current one.
 // navigateBack pops these to let Backspace step back through the resources
@@ -1283,6 +1314,7 @@ type historyEntry struct {
 	vcnFilterName string
 	drgFilterName string
 	okeFilterName string
+	lbFilterName  string
 }
 
 // pushHistory records the resource+scope combination switchResource is
@@ -1301,6 +1333,7 @@ func (m *Model) pushHistory() {
 		vcnFilterName: m.vcnFilterName,
 		drgFilterName: m.drgFilterName,
 		okeFilterName: m.okeFilterName,
+		lbFilterName:  m.lbFilterName,
 	})
 }
 
@@ -1319,6 +1352,15 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 		m.statusMsg = "select an OKE cluster first (Enter on an oke row)"
 		for i, r := range m.resources {
 			if r.Key() == "oke" {
+				idx = i
+				break
+			}
+		}
+	}
+	if lbIDRequiredResourceKeys[m.resources[idx].Key()] && m.scope.LbID == "" {
+		m.statusMsg = "select a load balancer first (\"i\" or Enter on a lb row)"
+		for i, r := range m.resources {
+			if r.Key() == "lb" {
 				idx = i
 				break
 			}
@@ -1344,6 +1386,11 @@ func (m *Model) switchResource(idx int) tea.Cmd {
 		m.scope.OkeID = ""
 		m.okeFilterName = ""
 	}
+	// Same idea for the Load Balancer filter — a fourth independent axis.
+	if !isLbDependent(m.resources[idx].Key()) {
+		m.scope.LbID = ""
+		m.lbFilterName = ""
+	}
 	return m.reloadCurrent()
 }
 
@@ -1364,6 +1411,7 @@ func (m *Model) navigateBack() tea.Cmd {
 	m.vcnFilterName = entry.vcnFilterName
 	m.drgFilterName = entry.drgFilterName
 	m.okeFilterName = entry.okeFilterName
+	m.lbFilterName = entry.lbFilterName
 	return m.reloadCurrent()
 }
 
@@ -1419,6 +1467,21 @@ func (m *Model) openVcnResourceSearch() {
 // Enter on a DRG row (selectDrgFilter).
 func (m *Model) openDrgResourceSearch() {
 	m.openScopedResourceSearch("DRG Resources", drgPickerResourceKeys)
+}
+
+// lbPickerResourceKeys is vcnPickerResourceKeys' Load Balancer analog — the
+// menu Enter/"i" on a "lb" row (selectLbFilter) jumps straight into,
+// matching OCI's own load balancer detail page layout (Listeners, Backend
+// Sets, then its policy/cert/hostname resources).
+var lbPickerResourceKeys = []string{
+	"lb-listener", "lb-backend-set", "lb-routing-policy", "lb-rule-set",
+	"lb-path-route-set", "lb-certificate", "lb-hostname",
+}
+
+// openLbResourceSearch is openVcnResourceSearch's Load Balancer analog,
+// triggered by "i"/Enter on a "lb" row (selectLbFilter).
+func (m *Model) openLbResourceSearch() {
+	m.openScopedResourceSearch("Load Balancer Resources", lbPickerResourceKeys)
 }
 
 // openScopedResourceSearch floats a flat (no category headers), fuzzy-
@@ -1558,6 +1621,19 @@ func (m *Model) selectOkeFilter(row registry.Row) {
 	m.openOkeResourceSearch(row)
 }
 
+// selectLbFilter is selectVcnFilter's Load Balancer analog — triggered by
+// "i" or Enter on a "lb" row, scopes Listeners/Backend Sets/Certificates/
+// Hostnames/Path Route Sets/Rule Sets/Routing Policies to this load
+// balancer. See selectVcnFilter's compartmentID doc.
+func (m *Model) selectLbFilter(id, name, compartmentID string) {
+	if compartmentID != "" {
+		m.scope.CompartmentID = compartmentID
+	}
+	m.scope.LbID = id
+	m.lbFilterName = name
+	m.openLbResourceSearch()
+}
+
 // openResourceSearch opens the ":" centered fuzzy picker over every
 // resource kind, grouped into categories (resourcePickerItems) the same
 // way OCI's own console groups its left nav.
@@ -1635,6 +1711,24 @@ func (m *Model) exitOke() tea.Cmd {
 	}
 	m.scope.OkeID = ""
 	m.okeFilterName = ""
+	return m.switchResource(idx)
+}
+
+// exitLb is exitVcn's Load Balancer analog — clears the Load Balancer
+// scope and returns to the Load Balancer list.
+func (m *Model) exitLb() tea.Cmd {
+	idx := -1
+	for i, r := range m.resources {
+		if r.Key() == "lb" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	m.scope.LbID = ""
+	m.lbFilterName = ""
 	return m.switchResource(idx)
 }
 
@@ -2932,7 +3026,7 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "i":
 		key := m.current().Key()
-		if key != "vcn" && key != "drg" && key != "oke" {
+		if key != "vcn" && key != "drg" && key != "oke" && key != "lb" {
 			return m, nil
 		}
 		row, ok := m.selected()
@@ -2946,6 +3040,8 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectDrgFilter(row.ID, row.Name, row.CompartmentID)
 		case "oke":
 			m.selectOkeFilter(row)
+		case "lb":
+			m.selectLbFilter(row.ID, row.Name, row.CompartmentID)
 		}
 		return m, nil
 
@@ -3064,6 +3160,8 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectDrgFilter(row.ID, row.Name, row.CompartmentID)
 		case "oke":
 			m.selectOkeFilter(row)
+		case "lb":
+			m.selectLbFilter(row.ID, row.Name, row.CompartmentID)
 		default:
 			m.openActionPicker(row)
 		}
@@ -3093,10 +3191,10 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.navigateBack()
 		}
 		// history is empty (nothing to step back through) but a VCN/DRG/
-		// OKE scope is still active — e.g. Enter on a VCN row set it, then
-		// Esc cancelled the picker before switchResource ever pushed
-		// anything. Fall back to exitVcn/exitDrg/exitOke's direct jump so
-		// it isn't stuck on.
+		// OKE/LB scope is still active — e.g. Enter on a VCN row set it,
+		// then Esc cancelled the picker before switchResource ever pushed
+		// anything. Fall back to exitVcn/exitDrg/exitOke/exitLb's direct
+		// jump so it isn't stuck on.
 		if m.scope.VcnID != "" {
 			return m, m.exitVcn()
 		}
@@ -3105,6 +3203,9 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.scope.OkeID != "" {
 			return m, m.exitOke()
+		}
+		if m.scope.LbID != "" {
+			return m, m.exitLb()
 		}
 		return m, nil
 	}
@@ -3197,6 +3298,9 @@ func (m Model) viewContent() string {
 	}
 	if m.okeFilterName != "" {
 		compartment += " › " + m.okeFilterName
+	}
+	if m.lbFilterName != "" {
+		compartment += " › " + m.lbFilterName
 	}
 	b.WriteString(pathStyle.Render("  Compartment: "))
 	b.WriteString(headerValueStyle.Render(compartment))
@@ -3539,6 +3643,16 @@ const resourceSearchSplashAnchorItems = 24
 // never disagree on where the box actually is.
 func (m Model) resourceSearchY() int {
 	maxItems := len(m.picker.treeFilter(""))
+	// Clamped to what renderResourceSearchList actually draws (see
+	// resourceSearchVisibleRows) rather than the full, unfiltered pool
+	// size — without this, the box's estimated height (and so its
+	// position) kept growing with every new resource kind ever registered
+	// even after the list itself stopped growing and started scrolling
+	// instead, pushing the box further up the screen for good every time
+	// the resource count crossed the cap, with no bound.
+	if visibleCap := resourceSearchVisibleRows(m); maxItems > visibleCap {
+		maxItems = visibleCap
+	}
 	maxLines := maxItems + pickerResourceItemsTop + 2 // +2: the box's own top/bottom border rows
 	spare := m.height - maxLines
 	if m.pickerReturnMode == modeSplash {
@@ -3546,9 +3660,9 @@ func (m Model) resourceSearchY() int {
 		anchorSpare := m.height - anchorLines
 		return anchorSpare / 4
 	}
-	// Anchored to the box's maximum possible height (every item, no filter
-	// — via the picker's own treeFilter, so this works the same whether
-	// it's the full ":" search or a narrower one like
+	// Anchored to the box's maximum possible height (every item, no
+	// filter — via the picker's own treeFilter, so this works the same
+	// whether it's the full ":" search or a narrower one like
 	// openVcnResourceSearch) rather than a live, filtered count: the box
 	// itself no longer shrinks as a query narrows it either (see
 	// renderResourceSearchList's own padding), so this is also just what
@@ -3918,6 +4032,9 @@ func (m Model) helpEntries() []helpEntry {
 	if m.current().Key() == "oke" {
 		add("⤶ / i", "", "node pools / add-ons")
 	}
+	if m.current().Key() == "lb" {
+		add("⤶ / i", "", "listeners / backend sets / policies / certs / hostnames")
+	}
 	if key := m.current().Key(); key == "security-list" || key == "route-table" || key == "nsg" || key == "drg-route-table" {
 		add("v", "", "view rules")
 	}
@@ -3925,7 +4042,7 @@ func (m Model) helpEntries() []helpEntry {
 		add("⌫", "", "cancel subtree fetch")
 	} else if len(m.history) > 0 {
 		add("⌫", "", "back")
-	} else if m.vcnFilterName != "" || m.drgFilterName != "" {
+	} else if m.vcnFilterName != "" || m.drgFilterName != "" || m.okeFilterName != "" || m.lbFilterName != "" {
 		add("⌫", "", "up")
 	}
 	add("←/→", "", "select column")
