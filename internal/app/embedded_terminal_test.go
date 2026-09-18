@@ -255,3 +255,26 @@ func TestEmbeddedTermSelection(t *testing.T) {
 		t.Fatalf("scrollback selectedText = %q, want %q", got, want)
 	}
 }
+
+// TestViewCursorStaysOnPromptAfterFullWidthLines reproduces the reported
+// bug: after output containing lines as wide as the terminal, the drawn
+// cursor landed a row above the prompt for every such line. The box
+// wrapped them again (lipgloss's Width() includes border+padding, so the
+// wrap point was cols-4, narrower than the emulator), adding screen rows
+// the emulator's cursor row knew nothing about.
+func TestViewCursorStaysOnPromptAfterFullWidthLines(t *testing.T) {
+	m := newEmbTermTestModel(t)
+	cols, rows := m.embTermSize()
+	emu := vt.NewSafeEmulator(cols, rows)
+	emu.Write([]byte(strings.Repeat("x", cols) + "\r\n" + strings.Repeat("y", cols-2) + "\r\n$ "))
+	m.embTerm = &embeddedTerm{emu: emu}
+
+	v := m.View()
+	if v.Cursor == nil {
+		t.Fatal("Cursor is nil")
+	}
+	lines := strings.Split(m.viewContent(), "\n")
+	if row := ansi.Strip(lines[v.Cursor.Y]); !strings.HasPrefix(strings.TrimLeft(row, "│ "), "$ ") {
+		t.Fatalf("row under the cursor (y=%d) is %q, want the \"$ \" prompt line", v.Cursor.Y, row)
+	}
+}

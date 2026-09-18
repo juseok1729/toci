@@ -755,12 +755,20 @@ func (m Model) renderEmbTermBox(content string) string {
 	// text back out, but without an explicit Width here lipgloss shrinks
 	// the box to fit whatever's actually been printed so far — a mostly
 	// blank prompt collapses the whole box to a sliver).
+	//
+	// Width() is the box's *total* width, border and padding included, so
+	// the overhead goes back on top of cols — same trap mapBoxStyle
+	// documents. With plain Width(cols) lipgloss word-wrapped every
+	// emulator line longer than cols-4 onto a second screen row, pushing
+	// everything below it down while the cursor (in emulator rows) stayed
+	// put: after a `cat` of a file with a couple of near-full-width lines
+	// the cursor sat that many rows above the prompt.
 	cols, _ := m.embTermSize()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(ociBorder)).
 		Padding(0, 1).
-		Width(cols)
+		Width(cols + tableBoxOverhead)
 	lines := strings.Split(style.Render(content), "\n")
 
 	title := titleStyle.Render(" SSH: " + m.pendingRow.Name + " ")
