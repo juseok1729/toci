@@ -15,6 +15,7 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/identity"
 	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/monitoring"
+	"github.com/oracle/oci-go-sdk/v65/mysql"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 )
 
@@ -207,6 +208,20 @@ func (f *Factory) ObjectStorage(region string) (objectstorage.ObjectStorageClien
 		c, err := objectstorage.NewObjectStorageClientWithConfigurationProvider(f.provider)
 		if err != nil {
 			return objectstorage.ObjectStorageClient{}, err
+		}
+		c.SetRegion(region)
+		return c, nil
+	})
+}
+
+// Mysql is the MySQL HeatWave service's DB system client (the SDK splits
+// the service into several clients — DbSystem, Channels, Backups, ... —
+// this is the one that lists DB systems and their HeatWave clusters).
+func (f *Factory) Mysql(region string) (mysql.DbSystemClient, error) {
+	return get(f, region, "mysql", func() (mysql.DbSystemClient, error) {
+		c, err := mysql.NewDbSystemClientWithConfigurationProvider(f.provider)
+		if err != nil {
+			return mysql.DbSystemClient{}, err
 		}
 		c.SetRegion(region)
 		return c, nil

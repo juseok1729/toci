@@ -44,7 +44,7 @@ press `c` for a fuzzy compartment tree picker; Compartments themselves are an in
 <details>
 <summary><strong>VCN/DRG/OKE/Load Balancer-scoped pickers</strong></summary>
 
-`Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions; an OKE row floats a menu for its Node Pools (`g` expands each pool into a tree of its worker nodes) or Add-ons (installed add-ons and their status); a Load Balancer row floats a menu for its Listeners, Backend Sets, Routing Policies, Rule Sets, Path Route Sets, Certificates, and Hostnames.
+`Enter` (or `i`) on a VCN row floats a picker over just its Subnets/Route Tables/Security Lists/Gateways; a DRG row does the same for its Attachments/Route Tables/Route Distributions; an OKE row floats a menu for its Node Pools (`g` expands each pool into a tree of its worker nodes) or Add-ons (installed add-ons and their status); a Load Balancer row floats a menu for its Listeners, Backend Sets, Routing Policies, Rule Sets, Path Route Sets, Certificates, and Hostnames; a MySQL HeatWave row opens its connection info (endpoints, ports, ready-made `mysql`/`mysqlsh` lines), with `g` expanding each DB system into its HeatWave cluster nodes.
 </details>
 
 <details>

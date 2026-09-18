@@ -44,7 +44,7 @@
 <details>
 <summary><strong>VCN/DRG/OKE/Load Balancer 스코프 피커</strong></summary>
 
-VCN 행에서 `Enter`(또는 `i`)를 누르면 그 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커가 뜨고, DRG 행에서는 그 DRG의 Attachment/Route Table/Route Distribution만 모은 피커가, OKE 행에서는 Node Pools(`g`로 노드풀마다 워커 노드 트리 펼치기)/Add-ons(설치된 애드온과 상태) 메뉴가, Load Balancer 행에서는 Listeners/Backend Sets/Routing Policies/Rule Sets/Path Route Sets/Certificates/Hostnames 메뉴가 뜹니다.
+VCN 행에서 `Enter`(또는 `i`)를 누르면 그 VCN의 Subnet/Route Table/Security List/Gateway만 모은 피커가 뜨고, DRG 행에서는 그 DRG의 Attachment/Route Table/Route Distribution만 모은 피커가, OKE 행에서는 Node Pools(`g`로 노드풀마다 워커 노드 트리 펼치기)/Add-ons(설치된 애드온과 상태) 메뉴가, Load Balancer 행에서는 Listeners/Backend Sets/Routing Policies/Rule Sets/Path Route Sets/Certificates/Hostnames 메뉴가 뜹니다. MySQL HeatWave 행에서는 접속 정보(엔드포인트, 포트, 바로 쓸 수 있는 `mysql`/`mysqlsh` 명령)가 열리고, `g`를 누르면 각 DB 시스템 아래에 HeatWave 클러스터 노드가 트리로 펼쳐집니다.
 </details>
 
 <details>

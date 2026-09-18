@@ -43,23 +43,10 @@ func expandExascaleNodes(rows []registry.Row) []registry.Row {
 // cluster row (not a synthetic header) — so a node row is "last" when the
 // next row is either another cluster row or the end of the list.
 func exascaleTreeGlyphs(rows []registry.Row) map[string]string {
-	glyphs := make(map[string]string, len(rows))
-	for i, row := range rows {
-		if _, isNode := row.Raw.(exascaleNodeRow); !isNode {
-			continue
-		}
-		last := i == len(rows)-1
-		if !last {
-			_, nextIsNode := rows[i+1].Raw.(exascaleNodeRow)
-			last = !nextIsNode
-		}
-		if last {
-			glyphs[row.ID] = treeChildLast
-		} else {
-			glyphs[row.ID] = treeChildMid
-		}
-	}
-	return glyphs
+	return childTreeGlyphs(rows, func(row registry.Row) bool {
+		_, isNode := row.Raw.(exascaleNodeRow)
+		return isNode
+	})
 }
 
 // exascaleTreeColumns decorates cols for the node tree: a cluster row

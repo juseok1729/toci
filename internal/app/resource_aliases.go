@@ -6,7 +6,7 @@ package app
 // File Systems) rather than the spelled-out label they'd have to guess.
 // Keyed by Key() like resourceDescriptions, and likewise only covering
 // resource kinds this app actually implements — LPG, RPC, OCIR, Block
-// Volume, MySQL Database Service, IAM, IDCS, and WAF are real OCI
+// Volume, IAM, IDCS, and WAF are real OCI
 // abbreviations too, just not ones toci has a resource for yet.
 var resourceSearchAliases = map[string][]string{
 	"security-list":   {"SL"},
@@ -26,5 +26,6 @@ var resourceSearchAliases = map[string][]string{
 	// abbreviation should find it, alongside ADB itself.
 	"adb":       {"ADB", "ADW", "ATP"},
 	"db-system": {"DBCS"},
+	"mysql":     {"MDS", "HeatWave"}, // MDS = MySQL Database Service, its old name
 	"exadata":   {"ExaCS"},
 }

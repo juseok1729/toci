@@ -30,7 +30,7 @@ var resourceCategories = []struct {
 	{"Gateways", []string{"gateway", "igw", "nat-gateway", "service-gateway"}},
 	{"Storage", []string{"file-system", "bucket"}},
 	{"Containers", []string{"oke", "oke-node-pool"}},
-	{"Database", []string{"db-system", "adb", "exadata", "exascale"}},
+	{"Database", []string{"db-system", "adb", "mysql", "exadata", "exascale"}},
 	// Compartment is last, not first — global scope ("c") already lets
 	// users switch compartments anytime, so nudging them to pick one here
 	// before browsing resources just adds friction.

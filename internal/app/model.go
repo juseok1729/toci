@@ -423,6 +423,11 @@ type Model struct {
 	// oke_node_tree.go) — NodePoolRow.Nodes rides along from List the same
 	// way, so this needs no extra fetch either.
 	okeNodeTree bool
+
+	// mysqlNodeTree is the MySQL HeatWave analog: "g" expands each DB
+	// system row into its HeatWave cluster's nodes (see mysql_tree.go) —
+	// MysqlDbSystemRow.HeatWave rides along from List.
+	mysqlNodeTree bool
 }
 
 // textInputWidth is set on every textinput.Model in this package. Without a
@@ -1036,6 +1041,9 @@ func (m *Model) setDisplayRows() {
 	if m.okeNodeTreeActive() {
 		rows = expandOkeNodes(rows)
 	}
+	if m.mysqlNodeTreeActive() {
+		rows = expandMysqlNodes(rows)
+	}
 	m.displayRows = rows
 	m.refreshTable(m.displayRows)
 }
@@ -1234,6 +1242,10 @@ func (m Model) okeNodeTreeActive() bool {
 	return m.okeNodeTree && m.current().Key() == "oke-node-pool"
 }
 
+func (m Model) mysqlNodeTreeActive() bool {
+	return m.mysqlNodeTree && m.current().Key() == "mysql"
+}
+
 // displayColumns is m.current().Columns(), tree-decorated (see vcn_tree.go)
 // when groupingActive — the single source of truth for table shape, so
 // refreshTable and relayoutTableColumns never disagree on column count
@@ -1248,6 +1260,8 @@ func (m *Model) displayColumns() []registry.Column {
 		cols = exascaleTreeColumns(cols, exascaleTreeGlyphs(m.displayRows))
 	case m.okeNodeTreeActive():
 		cols = okeTreeColumns(cols, okeTreeGlyphs(m.displayRows))
+	case m.mysqlNodeTreeActive():
+		cols = mysqlTreeColumns(cols, childTreeGlyphs(m.displayRows, isMysqlNode))
 	}
 	// Subtree mode's COMPARTMENT column goes in front of whatever the
 	// above already built, last — it needs the final column set to wrap.
@@ -2936,6 +2950,16 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.setDisplayRows()
 			return m, nil
+
+		case "mysql":
+			m.mysqlNodeTree = !m.mysqlNodeTree
+			if m.mysqlNodeTree {
+				m.statusMsg = "show heatwave nodes: on"
+			} else {
+				m.statusMsg = "show heatwave nodes: off"
+			}
+			m.setDisplayRows()
+			return m, nil
 		}
 		return m, nil
 
@@ -2950,6 +2974,9 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.okeNodeTreeActive() {
 			rows = filterOutOkeNodes(rows)
+		}
+		if m.mysqlNodeTreeActive() {
+			rows = filterOutMysqlNodes(rows)
 		}
 		if m.subtreeActive() {
 			rows = filterOutSubtreePlaceholders(rows)
@@ -3170,6 +3197,12 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selectOkeFilter(row)
 		case "lb":
 			m.selectLbFilter(row.ID, row.Name, row.CompartmentID)
+		// Enter on a MySQL DB system opens its connection info (endpoints,
+		// ports, ready-made mysql/mysqlsh lines) — the thing you actually
+		// come to this table for. A HeatWave node row falls through to
+		// mysqlDetail's plain-YAML path.
+		case "mysql":
+			m.openDetailContent(mysqlDetail(row))
 		default:
 			m.openActionPicker(row)
 		}
@@ -4009,6 +4042,14 @@ func (m Model) helpEntries() []helpEntry {
 		} else {
 			add("g", "", "show nodes: off")
 		}
+	}
+	if m.current().Key() == "mysql" {
+		if m.mysqlNodeTree {
+			add("g", "", "show heatwave nodes: on")
+		} else {
+			add("g", "", "show heatwave nodes: off")
+		}
+		add("⤶", "", "connection info")
 	}
 	add("e", "", "export csv")
 	if m.vcnFilterName != "" {
