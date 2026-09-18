@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,6 +52,48 @@ type embeddedTerm struct {
 	// content actually on screen. Capturing both right next to each
 	// other narrows that window to the same two calls, back to back.
 	lastCursor uv.Position
+
+	// sel is the in-progress or just-finished drag-to-copy selection over
+	// the rendered view, nil when there is none — see termSelection.
+	sel *termSelection
+}
+
+// termSelection is a mouse drag over the embedded terminal's box, in view
+// coordinates: row 0 is the top line render() currently shows (whatever
+// scrollback offset that is), so the highlight and the copied text both
+// come straight from the same lines the user sees. Anchored to the view
+// rather than to content: new output shifting the screen underneath a
+// finished selection clears it (see Update's embTermActivityMsg) instead
+// of trying to follow the text — good enough for "drag over some output,
+// paste it locally", and a fraction of the bookkeeping a real terminal
+// emulator does to keep a selection pinned to scrolling content.
+type termSelection struct {
+	start, end uv.Position // where the mouse went down, and where it is now
+	dragging   bool        // button still held
+}
+
+// ordered returns the selection's two corners in stream order (first by
+// row, then by column), whichever direction the user dragged in.
+func (s *termSelection) ordered() (a, b uv.Position) {
+	a, b = s.start, s.end
+	if b.Y < a.Y || (b.Y == a.Y && b.X < a.X) {
+		a, b = b, a
+	}
+	return a, b
+}
+
+// span returns the column range the selection covers on view row y (its
+// first and last rows are partial, every row in between is full-width).
+func (s *termSelection) span(y, width int) (from, to int) {
+	a, b := s.ordered()
+	from, to = 0, width-1
+	if y == a.Y {
+		from = a.X
+	}
+	if y == b.Y {
+		to = min(b.X, width-1)
+	}
+	return from, to
 }
 
 // startEmbeddedTerm launches shellCmd (via "sh -c") attached to a new pty
@@ -184,39 +227,108 @@ func (et *embeddedTerm) resetScroll() {
 	et.scrollback = 0
 }
 
-// render returns the rows lines that should currently be visible: the live
-// screen when scrollback is 0 (the common case, and the only ANSI-styled
-// string vt.Emulator.Render() actually knows how to produce), or a blend
-// of scrollback lines and the top of the live screen when scrolled up.
-func (et *embeddedTerm) render(rows int) string {
-	if et.scrollback == 0 {
-		s := et.emu.Render()
-		et.lastCursor = et.emu.CursorPosition()
-		return s
-	}
+// viewStart returns the index of the view's top row in the combined
+// "scrollback lines, then live screen rows" sequence render shows — so
+// render and viewLine agree on which content sits behind each row.
+func (et *embeddedTerm) viewStart(rows int) int {
+	sbLen := et.emu.ScrollbackLen()
+	start := sbLen + et.emu.Height() - rows - min(et.scrollback, sbLen)
+	return max(start, 0)
+}
+
+// viewLine returns the cells behind view row y, or nil past the end.
+func (et *embeddedTerm) viewLine(y, rows int) uv.Line {
 	sb := et.emu.Scrollback()
-	sbLen := sb.Len()
-	screenLines := strings.Split(et.emu.Render(), "\n")
-
-	off := et.scrollback
-	if off > sbLen {
-		off = sbLen
+	i := et.viewStart(rows) + y
+	if i < sb.Len() {
+		return sb.Line(i)
 	}
-	start := sbLen + len(screenLines) - rows - off
-	if start < 0 {
-		start = 0
+	if i -= sb.Len(); i >= et.emu.Height() {
+		return nil
 	}
-
-	lines := make([]string, 0, rows)
-	for i := start; i < start+rows; i++ {
-		switch {
-		case i < sbLen:
-			lines = append(lines, sb.Line(i).Render())
-		case i-sbLen < len(screenLines):
-			lines = append(lines, screenLines[i-sbLen])
-		default:
-			lines = append(lines, "")
+	line := make(uv.Line, et.emu.Width())
+	for x := range line {
+		if c := et.emu.CellAt(x, i); c != nil {
+			line[x] = *c
 		}
+	}
+	return line
+}
+
+// selectedText returns the text under sel, one line per view row with
+// trailing blanks trimmed — what a drag-to-copy puts on the clipboard.
+func (et *embeddedTerm) selectedText(rows int) string {
+	if et.sel == nil {
+		return ""
+	}
+	a, b := et.sel.ordered()
+	var out []string
+	for y := a.Y; y <= b.Y; y++ {
+		line := et.viewLine(y, rows)
+		from, to := et.sel.span(y, len(line))
+		var sb strings.Builder
+		for x := from; x <= to; x++ {
+			switch c := line[x]; {
+			case x > 0 && line[x-1].Width > 1: // continuation of a wide char
+			case c.IsZero():
+				sb.WriteByte(' ')
+			default:
+				sb.WriteString(c.Content)
+			}
+		}
+		out = append(out, strings.TrimRight(sb.String(), " "))
+	}
+	return strings.Join(out, "\n")
+}
+
+// highlight re-renders the rows sel covers with the selected cells in
+// reverse video, in place in lines.
+func (et *embeddedTerm) highlight(lines []string, rows int) {
+	a, b := et.sel.ordered()
+	for y := a.Y; y <= b.Y && y < len(lines); y++ {
+		line := slices.Clone(et.viewLine(y, rows))
+		from, to := et.sel.span(y, len(line))
+		for x := from; x <= to; x++ {
+			if x > 0 && line[x-1].Width > 1 {
+				continue
+			}
+			if line[x].IsZero() { // never-written cell: renderLine skips it
+				line[x] = uv.EmptyCell
+			}
+			line[x].Style.Attrs ^= uv.AttrReverse
+		}
+		lines[y] = line.Render()
+	}
+}
+
+// render returns the rows lines that should currently be visible: the live
+// screen when scrollback is 0 (the common case), or a blend of scrollback
+// lines and the top of the live screen when scrolled up — with the
+// selection, if any, highlighted on top.
+func (et *embeddedTerm) render(rows int) string {
+	// Render and CursorPosition back to back — see lastCursor.
+	lines := strings.Split(et.emu.Render(), "\n")
+	et.lastCursor = et.emu.CursorPosition()
+
+	if et.scrollback > 0 {
+		sb := et.emu.Scrollback()
+		sbLen := sb.Len()
+		screenLines := lines
+		start := et.viewStart(rows)
+		lines = make([]string, 0, rows)
+		for i := start; i < start+rows; i++ {
+			switch {
+			case i < sbLen:
+				lines = append(lines, sb.Line(i).Render())
+			case i-sbLen < len(screenLines):
+				lines = append(lines, screenLines[i-sbLen])
+			default:
+				lines = append(lines, "")
+			}
+		}
+	}
+	if et.sel != nil {
+		et.highlight(lines, rows)
 	}
 	return strings.Join(lines, "\n")
 }

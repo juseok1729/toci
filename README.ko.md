@@ -116,7 +116,7 @@ AWS 콘솔 스타일로 VCN의 서브넷, 그 서브넷들이 쓰는 라우팅 �
 <details>
 <summary><strong>Bastion SSH</strong></summary>
 
-인스턴스의 private IP를 조회하고 Bastion 세션을 생성한 뒤 바로 SSH 셸로 진입합니다.
+인스턴스의 private IP를 조회하고 Bastion 세션을 생성한 뒤 바로 SSH 셸로 진입합니다 — toci 창 안에 내장된 형태로요. 원격 출력을 드래그하면 로컬 클립보드로 복사되고, 로컬에서 복사한 텍스트는 터미널의 평소 붙여넣기 키로 그대로 붙여넣을 수 있으며, 스크롤은 휠 또는 shift+↑/↓로 합니다.
 </details>
 
 ## 사전 준비

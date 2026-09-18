@@ -1,11 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	vt "github.com/charmbracelet/x/vt"
 
 	"toci/internal/registry"
@@ -145,10 +148,6 @@ func TestViewHidesCursorOutsideEmbeddedTermMode(t *testing.T) {
 	}
 }
 
-// TestViewDisablesMouseTrackingInEmbeddedTermMode reproduces a reported
-// bug: toci's own mouse tracking (needed elsewhere for row/menu clicks)
-// stayed on inside an ssh session too, which made the real terminal route
-// mouse drags to us instead of its own native drag-to-copy selection.
 // TestRenderCapturesCursorPositionAlongsideContent reproduces a reported
 // bug: View() used to call emu.CursorPosition() on its own, well after
 // render() had already captured the content — long enough (building the
@@ -174,17 +173,85 @@ func TestRenderCapturesCursorPositionAlongsideContent(t *testing.T) {
 	}
 }
 
-func TestViewDisablesMouseTrackingInEmbeddedTermMode(t *testing.T) {
+// TestEmbTermDragCopiesAndPastePassesThrough covers the clipboard both
+// ways: a left drag over the box selects text that lands on the clipboard
+// on release (which needs toci's mouse tracking left on in this mode —
+// the real terminal's own drag-to-copy can't see the drag, so toci does
+// it), and a bracketed paste from the local terminal goes into the pty.
+func TestEmbTermDragCopiesAndPastePassesThrough(t *testing.T) {
 	m := newEmbTermTestModel(t)
 	cols, rows := m.embTermSize()
 	m.embTerm = &embeddedTerm{emu: vt.NewSafeEmulator(cols, rows)}
+	_, _ = m.embTerm.emu.Write([]byte("hello world"))
 
-	if v := m.View(); v.MouseMode != tea.MouseModeNone {
-		t.Errorf("MouseMode = %v, want MouseModeNone inside an embedded ssh session", v.MouseMode)
+	if v := m.View(); v.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("MouseMode = %v, want MouseModeCellMotion so drags reach the selection", v.MouseMode)
 	}
 
-	m.mode = modeTable
-	if v := m.View(); v.MouseMode != tea.MouseModeCellMotion {
-		t.Errorf("MouseMode = %v, want MouseModeCellMotion outside modeEmbeddedTerm", v.MouseMode)
+	x, y := embTermContentCol, embTermContentRow
+	var mm tea.Model = m
+	mm, _ = mm.Update(tea.MouseClickMsg{X: x + 6, Y: y, Button: tea.MouseLeft})
+	mm, _ = mm.Update(tea.MouseMotionMsg{X: x + 10, Y: y, Button: tea.MouseLeft})
+	if !strings.Contains(mm.(Model).viewContent(), "\x1b[7mworld") {
+		t.Errorf("dragged-over text not highlighted")
+	}
+	mm, cmd := mm.Update(tea.MouseReleaseMsg{X: x + 10, Y: y, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatalf("release produced no clipboard cmd")
+	}
+	if got := fmt.Sprint(cmd()); got != "world" {
+		t.Errorf("clipboard = %q, want %q", got, "world")
+	}
+
+	// Paste: emu.Paste writes into the emulator's reply pipe, which
+	// replyLoop would forward to the pty — read it directly here.
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 64)
+		n, _ := m.embTerm.emu.Read(buf)
+		got <- string(buf[:n])
+	}()
+	mm.Update(tea.PasteMsg{Content: "ls -la\n"})
+	select {
+	case s := <-got:
+		if s != "ls -la\n" {
+			t.Errorf("pasted %q, want %q", s, "ls -la\n")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("paste never reached the emulator's reply pipe")
+	}
+}
+
+// TestEmbeddedTermSelection covers drag-to-copy: the text a selection
+// resolves to (stream order across rows, trailing blanks trimmed, a
+// backwards drag normalised) and the reverse-video highlight render()
+// paints over it.
+func TestEmbeddedTermSelection(t *testing.T) {
+	et := &embeddedTerm{emu: vt.NewSafeEmulator(20, 3)}
+	_, _ = et.emu.Write([]byte("hello world\r\nsecond line\r\n"))
+
+	// Dragged backwards, from (5,1) "d" up to (6,0) "w".
+	et.sel = &termSelection{start: uv.Pos(5, 1), end: uv.Pos(6, 0)}
+	if got, want := et.selectedText(3), "world\nsecond"; got != want {
+		t.Fatalf("selectedText = %q, want %q", got, want)
+	}
+
+	out := strings.Split(et.render(3), "\n")
+	if !strings.Contains(out[0], "\x1b[7mworld") || !strings.Contains(out[1], "\x1b[7msecond") {
+		t.Fatalf("selection not highlighted in reverse video:\n%q", out)
+	}
+	if strings.Contains(out[2], "\x1b[7m") {
+		t.Fatalf("row outside the selection got highlighted: %q", out[2])
+	}
+	if strings.TrimRight(ansi.Strip(out[0]), " ") != "hello world" {
+		t.Fatalf("highlight changed the text: %q", ansi.Strip(out[0]))
+	}
+
+	// Beyond the live screen: selecting scrollback lines after scrolling up.
+	_, _ = et.emu.Write([]byte("third\r\nfourth\r\nfifth\r\n"))
+	et.scrollUp(3) // scrollback holds "hello world", "second line", "third"; view now starts at its top
+	et.sel = &termSelection{start: uv.Pos(0, 0), end: uv.Pos(2, 1)}
+	if got, want := et.selectedText(3), "hello world\nsec"; got != want {
+		t.Fatalf("scrollback selectedText = %q, want %q", got, want)
 	}
 }

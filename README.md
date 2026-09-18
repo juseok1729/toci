@@ -116,7 +116,7 @@ local fuzzy filter, live refresh.
 <details>
 <summary><strong>Bastion SSH</strong></summary>
 
-resolve an instance's private IP, create a Bastion session, and drop straight into an SSH shell.
+resolve an instance's private IP, create a Bastion session, and drop straight into an SSH shell — embedded in toci's own window. Drag to copy remote output to your local clipboard, paste local text with your terminal's usual paste key, and scroll with the wheel or shift+↑/↓.
 </details>
 
 ## Prerequisites

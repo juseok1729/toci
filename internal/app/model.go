@@ -15,6 +15,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	oci_bastion "github.com/oracle/oci-go-sdk/v65/bastion"
 	"github.com/oracle/oci-go-sdk/v65/core"
@@ -1986,6 +1987,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.embTerm == nil {
 			return m, nil
 		}
+		// New output has moved the content a finished selection was
+		// highlighting — drop the highlight rather than show it over the
+		// wrong text (it's already on the clipboard). A drag in progress
+		// keeps going and copies whatever is under it on release.
+		if m.embTerm.sel != nil && !m.embTerm.sel.dragging {
+			m.embTerm.sel = nil
+		}
 		return m, m.embTerm.waitForActivity()
 
 	case embTermExitMsg:
@@ -2083,8 +2091,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateMouse(msg)
 		case modePicker:
 			return m.updatePickerMouse(msg)
+		case modeEmbeddedTerm:
+			return m.updateEmbTermMouse(msg)
 		}
 		return m, nil
+
+	case tea.PasteMsg:
+		// Bracketed paste from the local terminal goes straight into the
+		// remote shell; emu.Paste re-brackets it if the remote asked for
+		// that (bash/zsh do), so a multi-line paste isn't run line by line.
+		if m.mode == modeEmbeddedTerm {
+			if m.embTerm != nil {
+				m.embTerm.sel = nil
+				m.embTerm.resetScroll()
+				m.embTerm.emu.Paste(msg.Content)
+			}
+			return m, nil
+		}
 
 	}
 
@@ -2099,6 +2122,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // detach/reattach: unlike tmux, a normal remote `exit` (embTermExitMsg)
 // is the expected way back.
 func (m Model) updateEmbeddedTerm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.embTerm != nil {
+		m.embTerm.sel = nil // any key clears the selection, like a real terminal
+	}
 	if msg.String() == "ctrl+\\" {
 		if m.embTerm != nil {
 			// Leave m.embTerm set (just marked killed) rather than nil —
@@ -2130,6 +2156,64 @@ func (m Model) updateEmbeddedTerm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// updateEmbTermMouse gives the embedded terminal the mouse: wheel scrolls
+// the scrollback, and a left drag over the box selects text that's copied
+// to the local clipboard on release (OSC 52, same path as "y" on a row).
+// toci's own mouse tracking stays on for this — which is exactly why the
+// real terminal emulator's native drag-to-copy can't see the drag, and
+// why this exists.
+//
+// ponytail: mouse events are never forwarded to the remote (a remote vim
+// with `set mouse=a` gets none). Upgrade path: when the remote has turned
+// on mouse reporting (vt.Emulator tracks the mode; needs exposing), pass
+// events through emu.SendMouse instead of selecting.
+func (m Model) updateEmbTermMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	et := m.embTerm
+	if et == nil {
+		return m, nil
+	}
+	cols, rows := m.embTermSize()
+	switch msg := msg.(type) {
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			et.scrollUp(3)
+		case tea.MouseWheelDown:
+			et.scrollDown(3)
+		}
+	case tea.MouseClickMsg:
+		et.sel = nil
+		if msg.Button == tea.MouseLeft {
+			p := embTermCell(msg.X, msg.Y, cols, rows)
+			et.sel = &termSelection{start: p, end: p, dragging: true}
+		}
+	case tea.MouseMotionMsg:
+		if et.sel != nil && et.sel.dragging {
+			et.sel.end = embTermCell(msg.X, msg.Y, cols, rows)
+		}
+	case tea.MouseReleaseMsg:
+		if et.sel != nil && et.sel.dragging {
+			et.sel.dragging = false
+			if et.sel.start == et.sel.end { // a plain click selects nothing
+				et.sel = nil
+				return m, nil
+			}
+			return m, tea.SetClipboard(et.selectedText(rows))
+		}
+	}
+	return m, nil
+}
+
+// embTermCell maps a screen mouse position to a cell of the embedded
+// terminal's box, clamped to its edges so a drag that wanders outside the
+// box still extends the selection to the nearest cell.
+func embTermCell(x, y, cols, rows int) uv.Position {
+	return uv.Pos(
+		min(max(x-embTermContentCol, 0), cols-1),
+		min(max(y-embTermContentRow, 0), rows-1),
+	)
 }
 
 func (m Model) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -3050,14 +3134,11 @@ const (
 func (m Model) View() tea.View {
 	v := tea.NewView(m.viewContent())
 	v.AltScreen = true
-	// Mouse tracking stays off during an embedded SSH session: with it on,
-	// the real terminal emulator routes mouse drags to us as click/motion
-	// events instead of letting its own native drag-to-copy selection see
-	// them, breaking copy inside the remote shell. Every other mode still
-	// wants it on for toci's own row/menu clicks.
-	if m.mode != modeEmbeddedTerm {
-		v.MouseMode = tea.MouseModeCellMotion
-	}
+	// Cell-motion tracking everywhere, the embedded SSH session included:
+	// there it feeds updateEmbTermMouse's own drag-to-copy selection (the
+	// real terminal emulator's native one can't see drags while tracking
+	// is on, so toci does the job itself).
+	v.MouseMode = tea.MouseModeCellMotion
 	if m.mode == modeEmbeddedTerm && m.embTerm != nil && m.embTerm.scrollback == 0 {
 		// ponytail: always a blinking block cursor — doesn't track the
 		// remote app's own hide-cursor/shape requests (vt.Callbacks'
@@ -3173,7 +3254,7 @@ func (m Model) viewContent() string {
 			main.WriteString(m.renderEmbTermBox(m.embTerm.render(rows)))
 			main.WriteString("\n")
 		}
-		hint := "ctrl+\\: force-quit · shift+↑/↓: scroll"
+		hint := "ctrl+\\: force-quit · shift+↑/↓ or wheel: scroll · drag: copy"
 		if m.embTerm != nil && m.embTerm.scrollback > 0 {
 			hint += fmt.Sprintf(" · scrolled back %d lines (shift+↓ to return)", m.embTerm.scrollback)
 		}
