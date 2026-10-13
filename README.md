@@ -201,6 +201,7 @@ Cross-compile for another platform with `GOOS`/`GOARCH` (e.g. `GOOS=darwin GOARC
 ```bash
 ./toci                                      # profile: $OCI_CLI_PROFILE or DEFAULT
 ./toci --profile DEV                        # a specific profile
+./toci --config-file ~/work/oci.conf        # a config file other than ~/.oci/config
 ./toci --profile DEV --region us-ashburn-1  # override region (default: profile's region)
 ./toci --profile DEV --write                # enable write actions (instance start/stop, Bastion SSH)
 ```

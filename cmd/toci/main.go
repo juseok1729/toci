@@ -18,7 +18,7 @@ import (
 var version = "dev"
 
 func main() {
-	var profile, region string
+	var profile, region, configFile string
 	var write bool
 
 	root := &cobra.Command{
@@ -33,7 +33,12 @@ func main() {
 				profile = "DEFAULT"
 			}
 
-			provider := common.CustomProfileConfigProvider("", profile)
+			if configFile == "" {
+				configFile = os.Getenv("OCI_CLI_CONFIG_FILE")
+			}
+
+			// empty configFile -> SDK falls back to ~/.oci/config
+			provider := common.CustomProfileConfigProvider(configFile, profile)
 			factory := clients.NewFactory(provider)
 
 			tenancyID, err := factory.TenancyID()
@@ -57,6 +62,7 @@ func main() {
 	}
 
 	root.Flags().StringVar(&profile, "profile", "", "OCI config profile (default: $OCI_CLI_PROFILE or DEFAULT)")
+	root.Flags().StringVar(&configFile, "config-file", "", "OCI config file path (default: $OCI_CLI_CONFIG_FILE or ~/.oci/config)")
 	root.Flags().StringVar(&region, "region", "", "override region (default: profile's region)")
 	root.Flags().BoolVar(&write, "write", false, "enable write actions (start/stop, ...); default is read-only")
 

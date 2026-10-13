@@ -21,6 +21,7 @@ go build -ldflags="-s -w" -trimpath -o toci ./cmd/toci
 ```bash
 ./toci                                # 프로파일: $OCI_CLI_PROFILE 또는 DEFAULT
 ./toci --profile DEV                  # 특정 프로파일
+./toci --config-file ~/work/oci.conf  # ~/.oci/config 대신 다른 설정 파일 사용 (또는 $OCI_CLI_CONFIG_FILE)
 ./toci --profile DEV --region us-ashburn-1 # 리전 강제 지정 (기본: 프로파일의 region)
 ./toci --profile DEV --write          # 쓰기 액션(인스턴스 start/stop) 활성화
 ```
