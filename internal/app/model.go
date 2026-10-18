@@ -183,10 +183,14 @@ type Model struct {
 	sortCol    int
 	sortDesc   bool
 
-	table       table.Model
-	detail      viewport.Model
-	picker      picker
-	filterInput textinput.Model
+	table table.Model
+	// tableViewWidth is the on-screen width available to the table; the
+	// table itself may be wider (full cell contents) and is scrolled
+	// horizontally to the highlighted column in View().
+	tableViewWidth int
+	detail         viewport.Model
+	picker         picker
+	filterInput    textinput.Model
 
 	// pickerReturnMode is where Esc (or a no-op confirm) sends the current
 	// picker back to. Zero value is modeTable, right for every ordinary
@@ -914,6 +918,23 @@ func fitColumns(cols []registry.Column, colValues [][]string, available int) []i
 	return widths
 }
 
+// layoutColumns is fitColumns, except that when the full (uncapped) cell
+// contents don't fit in `available` it keeps every column at full width
+// instead of truncating with "…" — the caller scrolls horizontally. Returns
+// the widths and the table width to use (>= available).
+func layoutColumns(cols []registry.Column, colValues [][]string, available int) ([]int, int) {
+	full := make([]int, len(cols))
+	total := 0
+	for i, c := range cols {
+		full[i] = fitColumnWidth(c.Header, colValues[i], 1<<20)
+		total += full[i] + 2
+	}
+	if available > 0 && total > available {
+		return full, total
+	}
+	return fitColumns(cols, colValues, available), available
+}
+
 // shrinkColumns is fitColumns' too-wide case: every protectedColumnHeaders
 // column keeps its full natural width, and the shortfall is scaled
 // proportionally across the rest — the same distribute-by-ratio idea
@@ -987,8 +1008,11 @@ func (m *Model) refreshTable(rows []registry.Row) {
 		trows[i] = cells
 	}
 
-	width := m.table.Width()
-	widths := fitColumns(cols, colValues, width)
+	width := m.tableViewWidth
+	if width <= 0 {
+		width = m.table.Width()
+	}
+	widths, width := layoutColumns(cols, colValues, width)
 	tcols := make([]table.Column, len(cols))
 	for i, c := range cols {
 		tcols[i] = table.Column{Title: c.Header, Width: widths[i]}
@@ -1128,6 +1152,7 @@ func (m *Model) relayout() {
 	if tableWidth < mainAbsFloor {
 		tableWidth = mainAbsFloor
 	}
+	m.tableViewWidth = tableWidth
 	m.table.SetWidth(tableWidth)
 	if m.resourceMap != nil || m.rulesOverlay {
 		// The "M" resource map (and, the same way, a "v" rules view) floats
@@ -1159,11 +1184,12 @@ func (m *Model) relayoutTableColumns() {
 			colValues[j] = append(colValues[j], c.Get(row))
 		}
 	}
-	widths := fitColumns(cols, colValues, m.table.Width())
+	widths, width := layoutColumns(cols, colValues, m.tableViewWidth)
 	tcols := make([]table.Column, len(cols))
 	for i, c := range cols {
 		tcols[i] = table.Column{Title: c.Header, Width: widths[i]}
 	}
+	m.table.SetWidth(width)
 	m.table.SetColumns(tcols)
 }
 
@@ -2857,9 +2883,9 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "b":
 		m.blinkEnabled = !m.blinkEnabled
 		if m.blinkEnabled {
-			m.statusMsg = "blink: on"
+			m.statusMsg = "b: blink on"
 		} else {
-			m.statusMsg = "blink: off"
+			m.statusMsg = "b: blink off"
 		}
 		return m, nil
 
@@ -3421,6 +3447,7 @@ func (m Model) viewContent() string {
 				tableView = blinkRecentRows(tableView, m.table.Columns(), m.recentRowNames(), m.blinkOn)
 			}
 			tableView = colorizeSortColumnHeader(tableView, m.table.Columns(), m.sortCursorCol, m.sortActive && m.sortCol == m.sortCursorCol, m.sortDesc)
+			tableView = m.scrollTableView(tableView)
 			main.WriteString(m.renderTableBox(tableView))
 		}
 		main.WriteString("\n")
@@ -3942,6 +3969,9 @@ func (m Model) renderTableBox(tableView string) string {
 		BorderForeground(lipgloss.Color(ociBorder)).
 		Padding(0, 1)
 	lines := strings.Split(style.Render(tableView), "\n")
+	if bar := m.scrollBorder(); bar != "" {
+		lines[len(lines)-1] = bar
+	}
 
 	title := titleStyle.Render(fmt.Sprintf(" %s [%d] ", m.current().Label(), len(m.displayRows)))
 	topWidth := ansi.StringWidth(lines[0])
@@ -4190,4 +4220,83 @@ func (m Model) renderRecentLine() string {
 		parts = append(parts, helpKeyStyle.Render(fmt.Sprintf("%d", i+1))+" "+headerValueStyle.Render(name))
 	}
 	return prefix + strings.Join(parts, "  ")
+}
+
+// scrollGeometry reports how far the over-wide table is scrolled: off is
+// the left edge of the viewport, hiddenL/hiddenR the columns not fully
+// visible on each side. ok is false when everything fits.
+func (m Model) scrollGeometry() (off, total, avail, hiddenL, hiddenR int, ok bool) {
+	avail = m.tableViewWidth
+	cols := m.table.Columns()
+	for _, c := range cols {
+		total += c.Width + 2
+	}
+	if avail <= 0 || total <= avail {
+		return 0, total, avail, 0, 0, false
+	}
+	// Scrolled just far enough right that the highlighted column is visible.
+	if _, end, found := columnRangeAt(cols, m.sortCursorCol); found && end > avail {
+		off = end - avail
+	}
+	x := 0
+	for _, c := range cols {
+		if x < off {
+			hiddenL++
+		}
+		x += c.Width + 2
+		if x > off+avail {
+			hiddenR++
+		}
+	}
+	return off, total, avail, hiddenL, hiddenR, true
+}
+
+// scrollTableView crops a wider-than-viewport table to tableViewWidth.
+func (m Model) scrollTableView(view string) string {
+	off, _, avail, _, _, ok := m.scrollGeometry()
+	if !ok {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	for i, l := range lines {
+		lines[i] = ansi.Cut(l, off, off+avail)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// scrollBorder returns the table box's bottom border with a horizontal
+// scrollbar drawn into it: "╰─◀ 2 ───━━━━━─── 3 ▶─╯", where 2/3 count the
+// columns hidden left/right. "" when the table fits.
+func (m Model) scrollBorder() string {
+	off, total, avail, hl, hr, ok := m.scrollGeometry()
+	if !ok {
+		return ""
+	}
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color(ociBorder))
+	hot := lipgloss.NewStyle().Foreground(lipgloss.Color(ociHighlt))
+	lStyle, rStyle := dim, dim
+	if hl > 0 {
+		lStyle = hot
+	}
+	if hr > 0 {
+		rStyle = hot
+	}
+	left := fmt.Sprintf("◀ %d ", hl)
+	right := fmt.Sprintf(" %d ▶", hr)
+	inner := avail + 2 - 2 - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if inner < 1 {
+		return ""
+	}
+	thumb := inner * avail / total
+	if thumb < 1 {
+		thumb = 1
+	}
+	pos := off * inner / total
+	if pos+thumb > inner {
+		pos = inner - thumb
+	}
+	return dim.Render("╰─") + lStyle.Render(left) +
+		dim.Render(strings.Repeat("─", pos)) + hot.Render(strings.Repeat("━", thumb)) +
+		dim.Render(strings.Repeat("─", inner-pos-thumb)) +
+		rStyle.Render(right) + dim.Render("─╯")
 }
