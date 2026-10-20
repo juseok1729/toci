@@ -55,7 +55,9 @@ func (r *DrgAttachmentResource) List(ctx context.Context, s Scope, page string) 
 		return nil, "", err
 	}
 
-	req := core.ListDrgAttachmentsRequest{CompartmentId: &s.CompartmentID}
+	// Without an explicit type the API lists only VCN attachments — IPSec tunnel,
+	// virtual circuit and remote peering attachments are silently left out.
+	req := core.ListDrgAttachmentsRequest{CompartmentId: &s.CompartmentID, AttachmentType: core.ListDrgAttachmentsAttachmentTypeAll}
 	if s.DrgID != "" {
 		req.DrgId = &s.DrgID
 	}

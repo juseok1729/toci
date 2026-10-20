@@ -28,9 +28,11 @@ type resourceMapData struct {
 	subnets          []mapNode
 	routeTables      []mapNode
 	connections      []mapNode
+	gateways         []mapNode // every IGW/NAT/SGW/LPG of the VCN, whether or not a route rule points at it
 
-	subnetToRT map[string]string   // subnet ID -> route table ID
-	rtToConn   map[string][]string // route table ID -> connection entity IDs, in first-seen order
+	subnetToRT map[string]string     // subnet ID -> route table ID
+	rtToConn   map[string][]string   // route table ID -> connection entity IDs, in first-seen order
+	rtRules    map[string][][]string // route table ID -> rule records (routeRuleHeaders), targets resolved to names
 }
 
 // buildResourceMap fetches and renders the AWS-console-style resource map
@@ -142,7 +144,7 @@ func (m Model) renderRulesOverlayBox() string {
 // before it's placed under a route table — name plus an optional detail
 // line (currently just a NAT gateway's public IP; other gateway kinds
 // have no single-field equivalent worth showing here).
-type gatewayEntity struct{ name, detail string }
+type gatewayEntity struct{ name, detail, peer, status string } // peer/status: a local peering gateway's peer LPG OCID and PEERED/REVOKED/...
 
 // listGatewayNames is the shared shape behind every gateway type's
 // "resolve OCID -> gatewayEntity for this VCN" lookup below — OCI has no
@@ -176,6 +178,7 @@ func fetchResourceMapData(ctx context.Context, factory *clients.Factory, scope r
 		vcnName:    vcnName,
 		subnetToRT: map[string]string{},
 		rtToConn:   map[string][]string{},
+		rtRules:    map[string][][]string{},
 	}
 
 	vnClient, err := factory.VirtualNetwork(scope.Region)
@@ -228,6 +231,10 @@ func fetchResourceMapData(ctx context.Context, factory *clients.Factory, scope r
 	if err != nil {
 		return data, fmt.Errorf("list gateways: %w", err)
 	}
+	for id, e := range entities {
+		data.gateways = append(data.gateways, mapNode{id: id, label: e.name, detail: e.detail, peer: e.peer, status: e.status})
+	}
+	slices.SortFunc(data.gateways, func(a, b mapNode) int { return strings.Compare(a.label, b.label) })
 	if drgIDs, err := attachedDrgIDs(ctx, vnClient, scope.CompartmentID, scope.VcnID); err == nil && len(drgIDs) > 0 {
 		if drgRows, err := fetchAll(ctx, registry.NewDrgResource(factory), registry.Scope{Region: scope.Region, CompartmentID: scope.CompartmentID}); err == nil {
 			for _, row := range drgRows {
@@ -241,6 +248,13 @@ func fetchResourceMapData(ctx context.Context, factory *clients.Factory, scope r
 	connSeen := map[string]bool{}
 	for _, rt := range data.routeTables {
 		full := rtByID[rt.id]
+		records := routeRuleRecords(full)
+		for i, r := range full.RouteRules {
+			if e, ok := entities[deref(r.NetworkEntityId)]; ok && e.name != "" {
+				records[i][1] += ": " + e.name
+			}
+		}
+		data.rtRules[rt.id] = records
 		for _, r := range full.RouteRules {
 			eid := deref(r.NetworkEntityId)
 			entity, ok := entities[eid]
@@ -355,7 +369,7 @@ func fetchGatewayNames(ctx context.Context, vnClient core.VirtualNetworkClient, 
 		}
 		ids, entities := make([]string, len(resp.Items)), make([]gatewayEntity, len(resp.Items))
 		for i, g := range resp.Items {
-			ids[i], entities[i] = deref(g.Id), gatewayEntity{name: deref(g.DisplayName)}
+			ids[i], entities[i] = deref(g.Id), gatewayEntity{name: deref(g.DisplayName), peer: deref(g.PeerId), status: string(g.PeeringStatus)}
 		}
 		return ids, entities, deref(resp.OpcNextPage), nil
 	})); err != nil {

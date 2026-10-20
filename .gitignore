@@ -27,6 +27,7 @@ profile.cov
 # CSV/Mermaid exports produced by running toci ("e"/"m" keys)
 *.csv
 *.mmd
+/toci-topology-*.html
 
 # Go workspace file
 go.work

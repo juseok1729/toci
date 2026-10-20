@@ -90,7 +90,8 @@ func fetchDrgRouteRules(ctx context.Context, factory *clients.Factory, region, d
 	names := map[string]string{}
 	page = ""
 	for {
-		req := core.ListDrgAttachmentsRequest{DrgId: &drgID}
+		// ALL: the default lists only VCN attachments, so IPSec/FastConnect/RPC next hops would stay OCIDs.
+		req := core.ListDrgAttachmentsRequest{DrgId: &drgID, AttachmentType: core.ListDrgAttachmentsAttachmentTypeAll}
 		if page != "" {
 			req.Page = &page
 		}

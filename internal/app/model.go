@@ -2027,6 +2027,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, m.load()
 
+	case topologyMsg:
+		if msg.err != nil {
+			m.statusMsg = "topology failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.statusMsg = "topology written to " + msg.path
+		if msg.failed > 0 {
+			m.statusMsg += fmt.Sprintf(" (%d connection lookup(s) failed — click the connection for the reason)", msg.failed)
+		}
+		return m, nil
+
 	case diagramMsg:
 		if msg.err != nil {
 			m.statusMsg = "diagram failed: " + msg.err.Error()
@@ -3157,6 +3168,10 @@ func (m Model) updateTable(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "building diagram..."
 		return m, m.buildVcnDiagram()
 
+	case "T":
+		m.statusMsg = "building topology..."
+		return m, m.buildTopology()
+
 	case "M":
 		// On the VCN table itself, the cursor row is a direct shortcut —
 		// no need to "i"/Enter it into a filter first just to immediately
@@ -4148,7 +4163,7 @@ func (m Model) bastionSpinnerPrefix() string {
 // plain info messages the usual dim status color.
 func renderStatusMsg(msg string) string {
 	switch {
-	case strings.HasPrefix(msg, "exported ") || strings.HasPrefix(msg, "diagram written"):
+	case strings.HasPrefix(msg, "exported ") || strings.HasPrefix(msg, "diagram written") || strings.HasPrefix(msg, "topology written"):
 		return successStyle.Render(msg)
 	case strings.Contains(msg, "failed") || strings.Contains(msg, "error"):
 		return errorStyle.Render(msg)

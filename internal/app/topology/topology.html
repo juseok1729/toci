@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>toci network visualizer</title>
+<style>
+  :root { --bg:#fff; --panel:#f7f6f4; --fg:#2b2b2b; --sub:#8a8a8a; --line:#dcd9d3; --blue:#1b6a96; --hi:#d6841a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.4 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif; display:flex; height:100vh; overflow:hidden; }
+  #stage { flex:1; min-width:0; position:relative; }
+  #svg { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; touch-action:none; user-select:none; z-index:1; }
+  /* The External / Oracle Cloud halves are infinite regions split at one x: they always fill the viewport, whatever the zoom. */
+  #bgExt, #bgCloud { position:absolute; top:0; bottom:0; overflow:hidden; pointer-events:none; }
+  #bgExt { left:0; width:300px; background:#f4f3f1; border-right:3px dashed #dedbd5; }
+  #bgCloud { right:0; left:300px; }
+  .bgt { position:absolute; left:0; right:0; top:14px; text-align:center; font-size:24px; color:#777; white-space:nowrap; }
+  #svg.panning { cursor:grabbing; }
+  #zoom { z-index:2; position:absolute; right:18px; bottom:16px; display:flex; align-items:center; gap:10px; }
+  #zoom button { width:38px; height:38px; border-radius:50%; border:3px solid #8c8c8c; background:#fff; color:#6d6d6d; font-size:24px; line-height:1; cursor:pointer; padding:0; }
+  #zoom button:hover { border-color:var(--blue); color:var(--blue); }
+  #pct { width:76px; height:34px; border:1px solid #cfcfcf; border-radius:4px; text-align:center; font-size:20px; color:#555; background:#fff; }
+  #resizer { width:5px; flex:none; cursor:col-resize; background:var(--line); opacity:.6; }
+  #resizer:hover, #resizer.drag { opacity:1; background:var(--hi); }
+  body.resizing { user-select:none; cursor:col-resize; }
+  aside { flex:none; width:min(560px, 36vw); background:var(--panel); border-left:1px solid var(--line); padding:14px; overflow:auto; }
+  h2 { font-size:24px; font-weight:400; margin:6px 0 18px; }
+  .kv { margin:0 0 14px; font-size:15px; } .kv b { font-weight:700; }
+  .lnk { color:var(--blue); text-decoration:underline; cursor:pointer; }
+  .act { color:#444; text-decoration:underline; cursor:pointer; margin-left:8px; }
+  .dot { display:inline-block; width:14px; height:14px; border-radius:50%; vertical-align:-2px; margin-right:6px; }
+  .ph { text-align:center; color:#8a8a8a; margin-top:46px; font-size:24px; line-height:1.4; padding:0 24px; }
+  .ph svg { width:210px; height:auto; display:block; margin:0 auto 34px; cursor:default; }
+  .sec { border-top:1px solid var(--line); margin-top:18px; padding-top:14px; }
+  .sub { color:var(--sub); }
+  #info { overflow-wrap:anywhere; }
+  details { margin-top:10px; } summary { cursor:pointer; color:var(--blue); }
+  table.rules { border-collapse:collapse; margin-top:4px; font-size:11px; width:100%; font-family:ui-monospace,Menlo,monospace; }
+  table.rules th { text-align:left; color:var(--sub); font-weight:normal; border-bottom:1px solid var(--line); padding:2px 6px 2px 0; }
+  table.rules td { padding:2px 6px 2px 0; vertical-align:top; word-break:break-word; }
+  .hint { color:var(--sub); margin-top:14px; font-size:12px; }
+  svg text { font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; }
+  .item { cursor:pointer; } .item[data-drag] { cursor:grab; } .item.dim, .link.dim { opacity:.22; }
+  .link.sel .ln, .link.sel .glyph circle, .link.sel .glyph rect { stroke:#5e574a; }
+  .link.sel .port { fill:#5e574a; stroke:#5e574a; }
+  .plink.sel .ln { stroke:#4b3566; stroke-width:4; }
+  @media (max-width:640px){ #resizer{display:none} body{flex-direction:column} aside{width:auto;border-left:0;border-top:1px solid var(--line);max-height:40vh} #stage{min-height:60vh} }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bgExt"><div class="bgt">External</div></div>
+  <div id="bgCloud"><div class="bgt">Oracle Cloud</div></div>
+  <svg id="svg" xmlns="http://www.w3.org/2000/svg"><g id="world"></g></svg>
+  <div id="zoom">
+    <button id="fit" title="Fit to screen" aria-label="Fit to screen">&#10021;</button>
+    <button id="zin" title="Zoom in" aria-label="Zoom in">+</button>
+    <button id="zout" title="Zoom out" aria-label="Zoom out">&minus;</button>
+    <input id="pct" value="100 %" aria-label="Zoom level">
+  </div>
+</div>
+<div id="resizer" title="drag to resize"></div>
+<aside>
+  <div id="info"></div>
+</aside>
+<script>
+const DATA = __TOCI_DATA__;
+const NS = 'http://www.w3.org/2000/svg';
+const KIND_LABEL = { drg:'DRG', vcn:'VCN', igw:'Internet Gateway', nat:'NAT Gateway', sgw:'Service Gateway', lpg:'Local Peering Gateway',
+                     vpn:'IPSec Connection', fc:'FastConnect Virtual Circuit', rpc:'Remote Peering Connection' };
+const GW = { igw:{ c:'#0f6a8f', t:'IGW' }, sgw:{ c:'#4f7076', t:'SGW' }, nat:{ c:'#a9506a', t:'NAT' }, lpg:{ c:'#7b5ea0', t:'LPG' } };
+const BOX = { vpn:{ s:'#5d6592', f:'#f5f7ff', t:'IPSec' }, fc:{ s:'#7a5c9e', f:'#f8f4fd', t:'FastConnect' }, rpc:{ s:'#3f8f8f', f:'#f2fbfb', t:'RPC' } };
+const TAN = '#b8ae96';
+const byId = new Map(DATA.nodes.map(n => [n.id, n]));
+const kindOf = id => (byId.get(id) || {}).kind;
+const MULTI = new Set(DATA.nodes.map(n => n.comp).filter(Boolean)).size > 1;
+
+// ---- model: who hangs off which DRG ----
+const drgs = DATA.nodes.filter(n => n.kind === 'drg').sort((a, b) => a.label.localeCompare(b.label));
+const attach = DATA.edges.filter(e => e.rel === 'attached');           // vcn -> drg
+const connEdges = DATA.edges.filter(e => ['ipsec','fastconnect','rpc'].includes(e.rel));   // drg -> connection (one per tunnel)
+const gwOf = {};                                                       // vcn id -> gateway nodes
+DATA.edges.filter(e => kindOf(e.source) === 'vcn' && GW[kindOf(e.target)]).forEach(e => (gwOf[e.source] ??= []).push(byId.get(e.target)));
+const peerEdges = DATA.edges.filter(e => e.rel === 'peering');         // lpg <-> lpg
+const gwVcn = {};                                                      // gateway id -> its vcn id
+DATA.edges.filter(e => e.rel === 'gateway').forEach(e => { gwVcn[e.target] = e.source; });
+const firstDrg = {};
+attach.forEach(e => { firstDrg[e.source] ??= e.target; });
+const vcnsOf = id => DATA.nodes.filter(n => n.kind === 'vcn' && firstDrg[n.id] === id).sort((a, b) => a.label.localeCompare(b.label));
+const orphans = DATA.nodes.filter(n => n.kind === 'vcn' && !firstDrg[n.id]).sort((a, b) => a.label.localeCompare(b.label));
+const connsOf = id => { const ids = [...new Set(connEdges.filter(e => e.source === id).map(e => e.target))]; return ids.map(i => byId.get(i)).filter(Boolean); };
+
+// ---- layout (world units) ----
+const EXT_W = 300, TOP = 90, HEX_R = 78, DRG_R = 112, BOX_W = 170, BOX_H = 90;
+const CONN_X = EXT_W + 230, DRG_X = CONN_X + 420;
+const pos = {};                         // id -> {x, y}
+let y0 = TOP, maxX = DRG_X + 700;
+const bands = [];
+drgs.forEach(d => {
+  const vs = vcnsOf(d.id), cs = connsOf(d.id), n = vs.length;
+  const maxAng = 55 * Math.PI / 180, step = n > 1 ? 2 * maxAng / (n - 1) : 0;
+  const R = Math.max(430, step ? 230 / step : 0);
+  const arcH = n > 1 ? 2 * R * Math.sin(maxAng) + 280 : 320;
+  const H = Math.max(420, arcH, cs.length * 160 + 140, 2 * DRG_R + 220);
+  const cy = y0 + H / 2;
+  pos[d.id] = { x: DRG_X, y: cy };
+  vs.forEach((v, i) => { const a = n > 1 ? -maxAng + i * step : 0; pos[v.id] = { x: DRG_X + R * Math.cos(a), y: cy + R * Math.sin(a) }; maxX = Math.max(maxX, pos[v.id].x + HEX_R + 120); });
+  cs.forEach((c, i) => { pos[c.id] = { x: CONN_X, y: cy + (i - (cs.length - 1) / 2) * 170 }; if (c.cpe) pos['cpe:' + c.id] = { x: EXT_W / 2, y: pos[c.id].y }; });
+  bands.push({ d, top: y0, H });
+  y0 += H + 40;
+});
+if (orphans.length) {
+  y0 += 10; bands.orphanTop = y0;
+  orphans.forEach((v, i) => { pos[v.id] = { x: EXT_W + 160 + (i % 6) * 260, y: y0 + 120 + Math.floor(i / 6) * 280 }; });
+  y0 += 80 + Math.ceil(orphans.length / 6) * 280;
+  maxX = Math.max(maxX, EXT_W + 160 + Math.min(orphans.length, 6) * 260);
+}
+// With local peering the stacked layout would send long lines across the map, so settle the VCNs once with
+// springs along peerings and DRG attachments (DRGs stay put; VCNs repel each other and the DRG circles).
+const relaxed = peerEdges.length > 0;
+if (relaxed) {
+  const vs = DATA.nodes.filter(n => n.kind === 'vcn' && pos[n.id]), vset = new Set(vs.map(v => v.id));
+  const sp = [];                                                   // [a, b, restLength, strength]
+  const seen = new Set();
+  peerEdges.forEach(e => { const a = gwVcn[e.source], b = gwVcn[e.target]; if (a && b && a !== b && vset.has(a) && vset.has(b)) { const k = [a, b].sort().join('|'); if (!seen.has(k)) { seen.add(k); sp.push([a, b, 330, 1]); } } });
+  attach.forEach(e => { if (vset.has(e.source) && pos[e.target]) sp.push([e.source, e.target, 440, 1.2]); });
+  const minV = 2 * HEX_R + 170, minD = DRG_R + HEX_R + 150, minX = (drgs.length ? DRG_X + DRG_R + HEX_R + 60 : EXT_W + 160);
+  for (let it = 0; it < 600; it++) {
+    const cool = 1 - it / 700, f = {};
+    vs.forEach(v => { f[v.id] = { x:0, y:0 }; });
+    sp.forEach(([a, b, L, w]) => {
+      const pa = pos[a], pb = pos[b], dx = pb.x - pa.x, dy = pb.y - pa.y, d = Math.hypot(dx, dy) || 1, m = (d - L) * .06 * w;
+      if (f[a]) { f[a].x += dx / d * m; f[a].y += dy / d * m; }
+      if (f[b]) { f[b].x -= dx / d * m; f[b].y -= dy / d * m; }
+    });
+    for (let i = 0; i < vs.length; i++) for (let j = i + 1; j < vs.length; j++) {
+      const pa = pos[vs[i].id], pb = pos[vs[j].id], dx = pa.x - pb.x, dy = pa.y - pb.y, d = Math.hypot(dx, dy) || .5;
+      const m = d < minV ? (minV - d) * .3 : 9000 / d;
+      f[vs[i].id].x += dx / d * m; f[vs[i].id].y += dy / d * m; f[vs[j].id].x -= dx / d * m; f[vs[j].id].y -= dy / d * m;
+    }
+    vs.forEach(v => drgs.forEach(d => {
+      const dx = pos[v.id].x - pos[d.id].x, dy = pos[v.id].y - pos[d.id].y, dist = Math.hypot(dx, dy) || .5;
+      if (dist < minD) { f[v.id].x += dx / dist * (minD - dist) * .4; f[v.id].y += dy / dist * (minD - dist) * .4; }
+    }));
+    vs.forEach(v => { const p = pos[v.id]; p.x = Math.max(minX, p.x + f[v.id].x * cool); p.y += f[v.id].y * cool; });
+  }
+  bands.orphanTop = null;                                          // orphans now sit by their peers
+  maxX = Math.max(maxX, ...vs.map(v => pos[v.id].x + HEX_R + 120));
+}
+const WORLD_W = maxX, WORLD_H = Math.max(y0, 500);
+
+// ---- drawing ----
+const svg = document.getElementById('svg'), world = document.getElementById('world');
+const mk = (tag, attrs, parent, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; (parent || world).appendChild(e); return e; };
+const label = (x, y, name, sub, parent, size = 13) => {
+  mk('text', { x, y, 'text-anchor':'middle', 'font-size':size, 'font-weight':600, fill:'#222' }, parent, name);
+  if (sub) mk('text', { x, y:y + size + 1, 'text-anchor':'middle', 'font-size':size - 1.5, fill:'#8a8a8a' }, parent, sub);
+};
+const items = new Map();                 // node id -> [svg groups]
+const links = [];                        // {el, ids, pill}
+const recOf = new Map();                 // link / pill element -> its record
+const reg = (id, g) => { g.classList.add('item'); g.dataset.id = id; (items.get(id) || items.set(id, []).get(id)).push(g); };
+
+const linkLayer = mk('g', {});           // under the nodes
+const nodeLayer = mk('g', {});
+const innerLayer = mk('g', {});          // thin routing lines inside the DRG circle
+const pillLayer = mk('g', {});           // route pills sit above them
+const pairs = [];                        // {a, b, pill}
+const attPort = {};                      // attachment id -> its port on the DRG circle
+const gwPoint = {};                      // gateway id -> its circle's centre (where a peering line ends)
+const edgeByAtt = Object.fromEntries(DATA.edges.filter(e => e.att).map(e => [e.att, e]));
+
+function port(p, q, r) {                 // point on the circle (center p, radius r) facing q
+  const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 1;
+  return { x:p.x + dx / d * r, y:p.y + dy / d * r };
+}
+function drawLink(p1, p2, ids, opts = {}) {
+  const g = mk('g', { class:'link' }, linkLayer);
+  const col = opts.edge && opts.edge.state === 'down' ? '#d9534f' : TAN;   // a detached attachment is red, still a solid line
+  mk('line', { class:'ln', x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y, stroke:col, 'stroke-width':3 }, g);
+  [p1, p2].forEach(p => mk('circle', { class:'port', cx:p.x, cy:p.y, r:6.5, fill:'#fff', stroke:col, 'stroke-width':2.5 }, g));
+  const m = { x:(p1.x + p2.x) / 2, y:(p1.y + p2.y) / 2 };
+  const gl = mk('g', { class:'glyph', transform:`translate(${m.x},${m.y})` }, g);
+  mk('circle', { r:15, fill:'#fff', stroke:col, 'stroke-width':2.5 }, gl);
+  const ch = mk('g', { transform:'rotate(-45)' }, gl);
+  mk('rect', { x:-10, y:-4.5, width:12, height:9, rx:4.5, fill:'none', stroke:col, 'stroke-width':2 }, ch);
+  mk('rect', { x:-2, y:-4.5, width:12, height:9, rx:4.5, fill:'none', stroke:col, 'stroke-width':2 }, ch);
+  g.style.cursor = 'pointer';
+  const rec = { el:g, ids, att:opts.edge && opts.edge.att, edge:opts.edge };
+  links.push(rec); recOf.set(g, rec);
+  if (rec.att) attPort[rec.att] = opts.drgPort;
+}
+const fmtList = l => l[0] + (l.length > 1 ? ' +(' + (l.length - 1) + ')' : '');
+// The Visualizer draws, inside the DRG, a thin line between two attachments whenever one's DRG route table
+// forwards to the other, with a route pill along it: destinations A sends to B on one line, B's to A on the other,
+// each arrow pointing the way the traffic goes.
+function makePair(a, b) {
+  const pa = attPort[a], pb = attPort[b], ea = edgeByAtt[a], eb = edgeByAtt[b];
+  const ab = (ea.next || {})[b] || [], ba = (eb.next || {})[a] || [];
+  if (!pa || !pb || (!ab.length && !ba.length)) return null;
+  mk('line', { x1:pa.x, y1:pa.y, x2:pb.x, y2:pb.y, stroke:'#ece4d3', 'stroke-width':1.6 }, innerLayer);
+  const ang = Math.atan2(pb.y - pa.y, pb.x - pa.x), flip = Math.cos(ang) < 0;
+  const toB = flip ? '\u25C0' : '\u25B6', toA = flip ? '\u25B6' : '\u25C0';
+  // The pill must fit between the two ports (the console does the same): full "dest +(n)" text if it does,
+  // else just the counts, else smaller type.
+  const avail = Math.max(16, Math.hypot(pb.x - pa.x, pb.y - pa.y) - 24), FS = 10.5, cw = .6;
+  const build = full => [[ab, toB], [ba, toA]].filter(x => x[0].length).map(([l, ar]) => ar + ' ' + (full ? fmtList(l) : '(' + l.length + ')'));
+  const width = (ls, fs) => Math.max(...ls.map(t => t.length)) * fs * cw + 14;
+  let lines = build(true);
+  if (width(lines, FS) > avail) lines = build(false);
+  let fs = FS;
+  if (width(lines, FS) > avail) fs = Math.max(5, FS * (avail - 14) / (width(lines, FS) - 14));
+  const w = Math.min(width(lines, fs), avail), lh = fs * 1.25, h = lines.length * lh + 7;
+  const g = mk('g', { class:'link pill', transform:`translate(${(pa.x + pb.x) / 2},${(pa.y + pb.y) / 2}) rotate(${(ang * 180 / Math.PI) + (flip ? 180 : 0)})` }, pillLayer);
+  mk('rect', { x:-w / 2, y:-h / 2, width:w, height:h, rx:Math.min(6, h / 2), fill:'#fff', stroke:'#1b6a96', 'stroke-width':1.5 }, g);
+  lines.forEach((t, i) => mk('text', { x:0, y:-h / 2 + 3.5 + lh * (i + .8), 'text-anchor':'middle', 'font-size':fs, fill:'#1b6a96' }, g, t));
+  g.style.cursor = 'pointer'; g.style.display = 'none';       // shown only while one of its two attachments is selected
+  return g;
+}
+
+function render() {
+  [linkLayer, nodeLayer, innerLayer, pillLayer].forEach(l => l.replaceChildren());
+  items.clear(); links.length = 0; recOf.clear(); pairs.length = 0;
+  for (const k in attPort) delete attPort[k];
+  for (const k in gwPoint) delete gwPoint[k];
+
+// DRGs and the VCN attachments
+drgs.forEach(d => {
+  const c = pos[d.id], g = mk('g', {}, nodeLayer);
+  mk('circle', { cx:c.x, cy:c.y, r:DRG_R, fill:'#fff8ef', stroke:'#f0a64a', 'stroke-width':2.5 }, g);
+  label(c.x, c.y - DRG_R - 26, d.label, '', g);
+  mk('text', { x:c.x, y:c.y + 5, 'text-anchor':'middle', 'font-size':15, fill:'#d6841a', 'font-weight':600 }, g, 'DRG');
+  reg(d.id, g);
+});
+attach.forEach(e => {
+  const a = pos[e.source], b = pos[e.target];
+  if (!a || !b) return;
+  const dp = port(b, a, DRG_R);
+  drawLink(dp, port(a, b, HEX_R * .93), [e.source, e.target], { edge:e, drg:b, drgPort:dp });
+});
+
+// VCN hexagons + gateways
+DATA.nodes.filter(n => n.kind === 'vcn').forEach(v => {
+  const c = pos[v.id]; if (!c) return;
+  const g = mk('g', {}, nodeLayer);
+  const pts = [0, 1, 2, 3, 4, 5].map(k => { const a = (-90 + 60 * k) * Math.PI / 180; return (c.x + HEX_R * Math.cos(a)) + ',' + (c.y + HEX_R * Math.sin(a)); }).join(' ');
+  mk('polygon', { points:pts, fill:'#f5f9fd', stroke:'#1b6a96', 'stroke-width':2.5, 'stroke-linejoin':'round' }, g);
+  label(c.x, c.y - HEX_R - 32, v.label, v.detail, g);
+  reg(v.id, g); g.dataset.drag = v.id;
+  // IGW / NAT / SGW (and an LPG with no peer in view) sit on the left outline: top vertex -> upper-left ->
+  // lower-left -> bottom vertex. A peered LPG sits on the outline facing its peer VCN.
+  const gws = gwOf[v.id] || [];
+  const peerPos = gw => { const pg = gw.kind === 'lpg' && gw.peer && gwVcn[gw.peer]; return pg && pos[pg] && pos[gwVcn[gw.peer]] ? pos[gwVcn[gw.peer]] : null; };
+  const toward = gws.filter(gw => peerPos(gw)), left = gws.filter(gw => !peerPos(gw));
+  const apothem = HEX_R * .866, rAt = deg => { const d = ((deg % 60) + 60) % 60, phi = (d > 30 ? 60 - d : d) * Math.PI / 180; return apothem / Math.cos(phi); };
+  const angs = toward.map(gw => { const q = peerPos(gw); return { gw, a:Math.atan2(q.y - c.y, q.x - c.x) * 180 / Math.PI }; }).sort((p, q) => p.a - q.a);
+  for (let i = 1; i < angs.length; i++) if (angs[i].a - angs[i - 1].a < 27) angs[i].a = angs[i - 1].a + 27;   // keep the circles from stacking
+  const spots = angs.map(({ gw, a }) => ({ gw, x:c.x + Math.cos(a * Math.PI / 180) * rAt(a), y:c.y + Math.sin(a * Math.PI / 180) * rAt(a) }));
+  const poly = [[0, -HEX_R], [-HEX_R * .866, -HEX_R / 2], [-HEX_R * .866, HEX_R / 2], [0, HEX_R]];
+  const seg = poly.slice(1).map((p, i) => Math.hypot(p[0] - poly[i][0], p[1] - poly[i][1])), total = seg.reduce((s, x) => s + x, 0);
+  left.forEach((gw, i) => {
+    let t = (0.14 + 0.72 * (i + 1) / (left.length + 1)) * total, k = 0;
+    while (k < seg.length - 1 && t > seg[k]) { t -= seg[k]; k++; }
+    const f = t / seg[k];
+    spots.push({ gw, x:c.x + poly[k][0] + (poly[k + 1][0] - poly[k][0]) * f, y:c.y + poly[k][1] + (poly[k + 1][1] - poly[k][1]) * f });
+  });
+  spots.forEach(({ gw, x, y }) => {
+    const gg = mk('g', {}, nodeLayer), st = GW[gw.kind];
+    gwPoint[gw.id] = { x, y };
+    mk('circle', { cx:x, cy:y, r:17, fill:st.c, stroke:'#fff', 'stroke-width':2 }, gg);
+    mk('text', { x, y:y + 3.5, 'text-anchor':'middle', 'font-size':10, 'font-weight':700, fill:'#fff' }, gg, st.t);
+    mk('title', {}, gg, gw.label);
+    reg(gw.id, gg);
+  });
+});
+
+// local peering: a purple line between the two LPG circles
+peerEdges.forEach(e => {
+  const a = gwPoint[e.source], b = gwPoint[e.target];
+  if (!a || !b) return;
+  const g = mk('g', { class:'link plink' }, linkLayer), col = e.state === 'down' ? '#bcb2c8' : '#8a6bb0';
+  mk('line', { class:'ln', x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke:col, 'stroke-width':2.6 }, g);
+  g.style.cursor = 'pointer';
+  const rec = { el:g, ids:[e.source, e.target, gwVcn[e.source], gwVcn[e.target]], edge:e };
+  links.push(rec); recOf.set(g, rec);
+});
+
+// connections (IPSec / FastConnect / RPC) and their external devices
+drgs.forEach(d => connsOf(d.id).forEach(cn => {
+  const c = pos[cn.id], st = BOX[cn.kind], d0 = pos[d.id];
+  const g = mk('g', {}, nodeLayer);
+  mk('rect', { x:c.x - BOX_W / 2, y:c.y - BOX_H / 2, width:BOX_W, height:BOX_H, fill:st.f, stroke:st.s, 'stroke-width':3 }, g);
+  mk('text', { x:c.x, y:c.y + 5, 'text-anchor':'middle', 'font-size':13, fill:st.s, 'font-weight':600 }, g, st.t);
+  label(c.x, c.y - BOX_H / 2 - 30, cn.label, cn.sub, g);
+  reg(cn.id, g); g.dataset.drag = cn.id;
+  const tunnels = connEdges.filter(e => e.source === d.id && e.target === cn.id);
+  tunnels.forEach((e, i) => {
+    const p = { x:c.x + BOX_W / 2, y:c.y + (i - (tunnels.length - 1) / 2) * 44 };
+    // Tunnel links run parallel, like the console's: each DRG-side port sits at the box port's height (nudged
+    // a little toward the DRG centre for boxes above/below it) rather than being aimed at the DRG's centre.
+    // The pair is clamped together (by its centre) so the tunnels stay parallel even for a box far above/below the DRG.
+    const half = (tunnels.length - 1) * 22, lim = DRG_R * .8 - half;
+    const yy = Math.max(d0.y - lim, Math.min(d0.y + lim, c.y + (d0.y - c.y) * .35)) + (p.y - c.y);
+    const dp = { x:d0.x - Math.sqrt(DRG_R * DRG_R - (yy - d0.y) * (yy - d0.y)), y:yy };
+    drawLink(p, dp, [d.id, cn.id], { edge:e, drg:d0, drgPort:dp });
+  });
+  if (cn.cpe) {                                          // the device on the other side, in the External column
+    const e0 = pos['cpe:' + cn.id], eg = mk('g', {}, nodeLayer);
+    mk('line', { x1:e0.x + 28, y1:e0.y, x2:c.x - BOX_W / 2, y2:c.y, stroke:'#e4e1db', 'stroke-width':2.5 }, linkLayer);
+    mk('rect', { x:e0.x - 28, y:e0.y - 34, width:56, height:68, rx:3, fill:'#7b716d' }, eg);
+    mk('text', { x:e0.x, y:e0.y + 6, 'text-anchor':'middle', 'font-size':16, 'font-weight':700, fill:'#fff' }, eg, cn.cpe.kind === 'cpe' ? 'CPE' : 'FC');
+    label(e0.x, e0.y - 56, cn.cpe.name || (cn.cpe.kind === 'cpe' ? 'CPE' : 'Provider'), cn.cpe.ip, eg, 12);
+    reg(cn.id, eg); eg.dataset.drag = 'cpe:' + cn.id;      // selects its connection; drags on its own
+  }
+}));
+
+const done = new Set();
+DATA.edges.forEach(e => Object.keys(e.next || {}).forEach(b => {
+  const k = [e.att, b].sort().join('|');
+  if (done.has(k)) return;
+  done.add(k);
+  const pill = makePair(e.att, b);
+  if (pill) { pairs.push({ a:e.att, b, pill }); const rec = links.find(l => l.att === e.att); if (rec) recOf.set(pill, rec); }
+}));
+
+if (!DATA.nodes.length) mk('text', { x:WORLD_W / 2, y:300, 'text-anchor':'middle', 'font-size':16, fill:'#8a8a8a' }, nodeLayer, 'No VCNs or DRGs found in this compartment');
+if (bands.orphanTop != null) mk('text', { x:EXT_W + 40, y:bands.orphanTop + 20, 'font-size':15, fill:'#8a8a8a' }, nodeLayer, 'Not attached to a DRG');
+}
+render();
+
+// ---- pan / zoom ----
+let view = { k:1, x:0, y:0 };
+const pct = document.getElementById('pct');
+const bgExt = document.getElementById('bgExt'), bgCloud = document.getElementById('bgCloud');
+function apply() {
+  world.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+  pct.value = Math.round(view.k * 100) + ' %';
+  const bx = Math.round(view.x + EXT_W * view.k);          // screen x of the External | Oracle Cloud boundary
+  bgExt.style.width = Math.max(0, bx) + 'px'; bgCloud.style.left = Math.max(0, bx) + 'px';
+}
+function zoomAt(f, cx, cy) {
+  const k = Math.min(4, Math.max(.08, view.k * f)), r = k / view.k;
+  view = { k, x:cx - (cx - view.x) * r, y:cy - (cy - view.y) * r }; apply();
+}
+function fit() {
+  const r = svg.getBoundingClientRect(), b = world.getBBox(), pad = 70;
+  const W = Math.max(b.width, 1) + pad * 2, H = Math.max(b.height, 1) + pad * 2, k = Math.min(r.width / W, r.height / H, 1.2) * .96;
+  view = { k, x:(r.width - b.width * k) / 2 - b.x * k, y:(r.height - b.height * k) / 2 - b.y * k }; apply();
+}
+// Proportional to the scroll distance, so a trackpad's stream of tiny events (or a mouse notch) zooms gently.
+svg.addEventListener('wheel', e => {
+  e.preventDefault();
+  const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+  const f = Math.exp(-Math.max(-120, Math.min(120, px)) * (e.ctrlKey ? .01 : .0011));
+  const r = svg.getBoundingClientRect(); zoomAt(f, e.clientX - r.left, e.clientY - r.top);
+}, { passive:false });
+// Dragging an end element (VCN, connection box, CPE) moves it and everything attached redraws live — the links,
+// the DRG ports, and the route pills, which regain room for their CIDRs as the attachments move apart.
+let drag = null;
+svg.addEventListener('pointerdown', e => {
+  const el = e.target.closest('[data-drag]'), key = el && el.dataset.drag;
+  drag = { x:e.clientX, y:e.clientY, vx:view.x, vy:view.y, moved:false, key, p0: key ? { ...pos[key] } : null };
+});
+window.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+  drag.moved = true; svg.classList.add('panning');
+  if (drag.key) { pos[drag.key] = { x:drag.p0.x + dx / view.k, y:drag.p0.y + dy / view.k }; render(); applySel(); }
+  else { view.x = drag.vx + dx; view.y = drag.vy + dy; apply(); }
+});
+window.addEventListener('pointerup', () => { svg.classList.remove('panning'); setTimeout(() => { drag = null; }, 0); });
+const center = () => { const r = svg.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+document.getElementById('zin').onclick = () => zoomAt(1.1, ...center());
+document.getElementById('zout').onclick = () => zoomAt(1 / 1.1, ...center());
+document.getElementById('fit').onclick = fit;
+pct.addEventListener('change', () => { const v = parseFloat(pct.value); if (v > 0) zoomAt((v / 100) / view.k, ...center()); else apply(); });
+
+// ---- selection + "Resource summary" panel (modelled on the console's) ----
+const info = document.getElementById('info');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const PLACEHOLDER = `<div class="ph"><svg viewBox="0 0 230 175" fill="none" stroke="#bdb8b0" stroke-width="10" stroke-linejoin="round"><path d="M112 27H31V128H128"/><rect x="112" y="10" width="72" height="34" fill="#fff"/><rect x="18" y="62" width="26" height="26" fill="#fff"/><path d="M150 104L174 128L150 152L126 128Z" fill="#fff"/><path d="M180 36L216 58L198 62L208 80L200 84L190 66L178 76Z" fill="#fff" stroke-width="4"/></svg>Click a resource on the map to view more information here.</div>`;
+const isGood = v => /^(available|attached|active|up|peered|provisioned)$/i.test(v);
+const short = id => '…' + String(id).slice(-6);
+function summary(id, name, rows, extra) {
+  const kv = (k, v) => `<div class="kv"><b>${esc(k)}:</b> ${v}</div>`;
+  let h = '<h2>Resource summary</h2>' +
+    kv('OCID', `<span data-ocid="${esc(id)}" data-short="${esc(short(id))}">${esc(short(id))}</span><a class="act" data-act="show">Show</a><a class="act" data-act="copy">Copy</a>`) +
+    kv('Name', `<span class="lnk">${esc(name)}</span>`);
+  rows.forEach(r => {
+    const v = r.t === 'state' ? `<span class="dot" style="background:${isGood(r.v) ? '#3b8a2e' : '#c0392b'}"></span>${esc(r.v)}`
+            : r.t === 'link' ? `<span class="lnk" data-find="${esc(r.v)}">${esc(r.v)}</span>` : esc(r.v);
+    h += kv(r.k, v);
+  });
+  return h + (extra || '');
+}
+const listSec = (title, l) => l && l.length ? `<div class="sec"><b>${esc(title)} (${l.length})</b>` + l.map(x => `<div class="sub">${esc(x)}</div>`).join('') + '</div>' : '';
+const tableSec = t => `<details${t.open ? ' open' : ''}><summary>${esc(t.title)}</summary><table class="rules"><thead><tr>` +
+  t.headers.map(x => `<th>${esc(x)}</th>`).join('') + '</tr></thead><tbody>' +
+  (t.rows || []).map(r => '<tr>' + r.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>').join('') + '</tbody></table></details>';
+function panel(n) {
+  const rows = [];
+  if (n.detail) rows.push({ k: n.kind === 'vcn' ? 'CIDR Block' : n.kind === 'nat' ? 'Public IP' : 'Details', v: n.detail });
+  rows.push({ k:'Type', v: KIND_LABEL[n.kind] || n.kind });
+  (n.props || []).forEach(p => rows.push(p));
+  if (n.kind === 'lpg') {
+    const pv = byId.get(gwVcn[n.peer]), pg = byId.get(n.peer);
+    if (n.peerStatus) rows.push({ k:'Peering status', v:n.peerStatus[0] + n.peerStatus.slice(1).toLowerCase(), t:'state' });
+    if (pg) rows.push({ k:'Peer gateway', v:pg.label, t:'link' });
+    if (pv) rows.push({ k:'Peer VCN', v:pv.label, t:'link' });
+  }
+  if (n.sub) rows.push({ k:'Connection', v: n.sub });
+  if (n.cpe) rows.push({ k: n.cpe.kind === 'cpe' ? 'CPE' : 'Provider', v: (n.cpe.name + ' ' + (n.cpe.ip || '')).trim() });
+  if (n.err) rows.push({ k:'Details unavailable', v: n.err });
+  const its = n.items && n.items.length ? `<div class="sec"><b>${esc(n.itemsTitle)}</b>` + n.items.map(i => `<div class="sub">${esc(i)}</div>`).join('') + '</div>' : '';
+  info.innerHTML = summary(n.id, n.label, rows, its + (n.tables || []).map(tableSec).join(''));
+}
+function linkPanel(e) {
+  const a = byId.get(e.source), b = byId.get(e.target);
+  if (e.rel === 'peering') {
+    const va = byId.get(gwVcn[e.source]), vb = byId.get(gwVcn[e.target]);
+    info.innerHTML = summary(e.source, e.name, [
+      { k:'Peering status', v: e.state === 'down' ? 'Not peered' : 'Peered', t:'state' },
+      { k:'Local peering gateway', v:a.label, t:'link' }, { k:'Peer gateway', v:b.label, t:'link' },
+      ...(va ? [{ k:'Virtual Cloud Network', v:va.label, t:'link' }] : []), ...(vb ? [{ k:'Peer VCN', v:vb.label, t:'link' }] : []),
+    ]);
+    return;
+  }
+  info.innerHTML = summary(e.att || e.id, e.name || 'DRG attachment', e.props || [],
+    listSec('Routes the DRG sends out through this attachment', e.routes) + listSec("Destinations in this attachment's DRG route table", e.routesIn));
+}
+info.addEventListener('click', ev => {
+  const act = ev.target.closest('[data-act]'), f = ev.target.closest('[data-find]');
+  if (act) {
+    const sp = info.querySelector('[data-ocid]');
+    if (act.dataset.act === 'show') { const on = act.textContent === 'Show'; sp.textContent = on ? sp.dataset.ocid : sp.dataset.short; act.textContent = on ? 'Hide' : 'Show'; }
+    else { try { navigator.clipboard.writeText(sp.dataset.ocid); act.textContent = 'Copied'; setTimeout(() => { act.textContent = 'Copy'; }, 1200); } catch (e) {} }
+  } else if (f) {
+    const n = DATA.nodes.find(x => x.label === f.dataset.find); if (n) selectNode(n);
+  }
+});
+
+// Route pills: those of every attachment pair that involves a selected attachment.
+function related(att) {
+  const set = new Set([att]);
+  pairs.forEach(p => { if (p.a === att) set.add(p.b); if (p.b === att) set.add(p.a); });
+  return set;
+}
+function selectLinks(recs) {
+  const atts = new Set(recs.map(r => r.att).filter(Boolean)), show = new Set(atts);
+  pairs.forEach(p => { const on = atts.has(p.a) || atts.has(p.b); p.pill.style.display = on ? '' : 'none'; if (on) { show.add(p.a); show.add(p.b); } });
+  links.forEach(l => l.el.classList.toggle('sel', recs.includes(l)));
+  return show;
+}
+let sel = null;                                    // {kind:'node'|'link', id} — survives re-renders while dragging
+const nodeOf = id => byId.get(id);
+function clearSel() {
+  sel = null; selectLinks([]);
+  document.querySelectorAll('.item,.link').forEach(e => e.classList.remove('dim'));
+  info.innerHTML = PLACEHOLDER;
+}
+function focusOn(ids) {
+  const keep = new Set(ids);
+  items.forEach((gs, id) => gs.forEach(g => g.classList.toggle('dim', !keep.has(id))));
+  links.forEach(l => l.el.classList.toggle('dim', !l.ids.every(i => keep.has(i))));
+}
+function highlightNode(n) {
+  const near = new Set([n.id]);
+  DATA.edges.forEach(x => { if (x.source === n.id) near.add(x.target); if (x.target === n.id) near.add(x.source); });
+  // a VCN or connection shows the pills of its own DRG links; a DRG would show every one, so it doesn't
+  const own = n.kind === 'vcn' || BOX[n.kind] ? links.filter(l => l.ids.includes(n.id)) : [];
+  selectLinks(own);
+  own.forEach(l => l.att && related(l.att).forEach(a => { const e = edgeByAtt[a]; if (e) { near.add(e.source); near.add(e.target); } }));
+  focusOn([...near]);
+}
+function highlightLink(rec) {
+  // The selected link is already drawn dark, so nothing else is faded.
+  document.querySelectorAll('.item,.link').forEach(e => e.classList.remove('dim'));
+  selectLinks([rec]);
+}
+function selectNode(n) { sel = { kind:'node', id:n.id }; highlightNode(n); panel(n); }
+function selectLink(rec) { sel = { kind:'link', id:rec.edge.id }; highlightLink(rec); linkPanel(rec.edge); }
+function applySel() {                              // re-apply the highlight after render() rebuilt the DOM
+  if (!sel) return;
+  if (sel.kind === 'node') { const n = nodeOf(sel.id); if (n) highlightNode(n); }
+  else { const rec = links.find(l => l.edge && l.edge.id === sel.id); if (rec) highlightLink(rec); }
+}
+svg.addEventListener('click', e => {
+  if (drag && drag.moved) return;                      // that was a pan or a drag, not a click
+  const it = e.target.closest('.item'), lk = e.target.closest('.link');
+  if (it) selectNode(nodeOf(it.dataset.id));
+  else if (lk) selectLink(recOf.get(lk));
+  else clearSel();
+});
+clearSel();
+
+// ---- drag the divider to resize the info panel (width remembered per browser) ----
+(() => {
+  const aside = document.querySelector('aside'), bar = document.getElementById('resizer');
+  const clamp = w => Math.max(240, Math.min(w, window.innerWidth * .75));
+  const setW = w => { aside.style.width = clamp(w) + 'px'; };
+  try { const w = parseInt(localStorage.getItem('toci.panelW')); if (w) setW(w); } catch (e) {}
+  bar.addEventListener('pointerdown', e => {
+    bar.setPointerCapture(e.pointerId); bar.classList.add('drag'); document.body.classList.add('resizing');
+    const move = ev => setW(window.innerWidth - ev.clientX);
+    const up = () => {
+      bar.classList.remove('drag'); document.body.classList.remove('resizing');
+      bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', up);
+      try { localStorage.setItem('toci.panelW', parseInt(aside.style.width)); } catch (e) {}
+    };
+    bar.addEventListener('pointermove', move); bar.addEventListener('pointerup', up);
+  });
+})();
+fit();
+</script>
+</body>
+</html>

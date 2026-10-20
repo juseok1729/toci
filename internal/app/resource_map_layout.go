@@ -16,6 +16,7 @@ import (
 // (e.g. an availability domain), "" for no grouping.
 type mapNode struct {
 	id, label, detail, group string
+	peer, status             string // local peering gateway only: the peer LPG's OCID and the peering status
 }
 
 // mapBoxStyle is the resource map's card style — no vertical padding, so
